@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# Regenerate src/gen/*.c for Demon's Crest from a verified ROM.
+#
+# Generated C is derived from copyrighted ROM data and is never committed;
+# every developer regenerates from their own copy. The ROM digests come from
+# rom_identity.txt, which the build and the release workflow read too, so
+# there is one place to change when a revision changes.
+#
+# Flags:
+#   --rom <path>  ROM to generate from. Defaults to SNESRECOMP_ROM, a known
+#                 filename at the repo root, then the path in rom.cfg (which
+#                 the setup wizard writes). The ROM does not have to live in
+#                 the repo — keeping it on your own drive is the better
+#                 habit, and SNESRECOMP_ROM sets it once for a shell.
+#   --no-verify   skip the ROM digest check (for a revision this project has
+#                 not been pinned to yet — expect the generated C to differ)
+#   --cfg-roots   seed analysis from every func declaration in recomp/*.cfg
+#   --profile-manifest <file>   Tier-2 coverage checkpoint/journal to seed
+#                 optional AOT roots from. Repeatable; merged with the
+#                 committed baseline. Committed coverage is clean call
+#                 landings only — bails are excluded by the framework.
+#   --no-profile  do not include the committed recomp/tier2_coverage.json
+#   -h|--help     this message
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$ROOT"
+
+VERIFY=1
+CFG_ROOTS=0
+ROM=""
+PROFILE_ARGS=()
+USE_BASELINE_PROFILE=1
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --rom) ROM=$2; shift 2 ;;
+    --no-verify) VERIFY=0; shift ;;
+    --cfg-roots) CFG_ROOTS=1; shift ;;
+    --profile-manifest) PROFILE_ARGS+=(--profile-manifest "$2"); shift 2 ;;
+    --no-profile) USE_BASELINE_PROFILE=0; shift ;;
+    -h|--help) sed -n '2,/^set -euo/p' "$0" | sed -n '/^# /p' | sed 's/^# //'; exit 0 ;;
+    *) echo "regen.sh: unknown flag: $1 (try --help)" >&2; exit 2 ;;
+  esac
+done
+
+SNESRECOMP_ROOT="${SNESRECOMP_ROOT:-snesrecomp}"
+CLI="$SNESRECOMP_ROOT/snesrecomp_cli.py"
+if [ ! -f "$CLI" ]; then
+  echo "regen.sh: $CLI missing — run: git submodule update --init --recursive" >&2
+  exit 1
+fi
+
+PYTHON="${PYTHON:-$(command -v python3 || command -v python || true)}"
+if [ -z "$PYTHON" ]; then
+  echo "regen.sh: no python3 on PATH" >&2
+  exit 1
+fi
+
+# The framework parses rom_identity.txt (the same parser CI uses), so this
+# script carries no copy of a digest to forget on a revision bump.
+IDENTITY="$SNESRECOMP_ROOT/tools/rom_identity.py"
+EXPECTED_CRC32="${SNESRECOMP_EXPECTED_CRC32:-$("$PYTHON" "$IDENTITY" "$ROOT/rom_identity.txt" --get expected_crc32)}"
+EXPECTED_SHA256="${SNESRECOMP_EXPECTED_SHA256:-$("$PYTHON" "$IDENTITY" "$ROOT/rom_identity.txt" --get expected_sha256)}"
+
+# The framework owns the search: --rom, then SNESRECOMP_ROM, then a known
+# name at the root, then rom.cfg (the path the setup wizard recorded).
+RESOLVE=(resolve-rom --project-root "$ROOT"
+         --name "Demon's Crest (USA).sfc" --name "demonscrest.sfc" --name "demonscrest.smc")
+if [ -n "$ROM" ]; then RESOLVE+=(--rom "$ROM"); fi
+if ! ROM=$("$PYTHON" "$CLI" "${RESOLVE[@]}"); then
+  echo "regen.sh: pass --rom /path/to/Demon's Crest (USA).sfc, set SNESRECOMP_ROM, put it" >&2
+  echo "          at the repo root, or record its path in rom.cfg. You must" >&2
+  echo "          legally own a copy of Demon's Crest." >&2
+  exit 1
+fi
+ROM=${ROM%$'\r'}  # Windows Python ends lines with CRLF
+
+VERIFY_ARGS=()
+if [ "$VERIFY" -eq 1 ]; then
+  VERIFY_ARGS=(--expected-crc32 "$EXPECTED_CRC32" --expected-sha256 "$EXPECTED_SHA256")
+  echo "== Verifying $ROM =="
+  "$PYTHON" "$CLI" verify-rom --rom "$ROM" "${VERIFY_ARGS[@]}"
+else
+  echo "== Skipping ROM verification (--no-verify) =="
+fi
+
+GEN_ARGS=(--rom "$ROM" --cfg-dir recomp --out-dir src/gen
+          --funcs-h recomp/funcs.h --project-root "$ROOT")
+if [ "$CFG_ROOTS" -eq 1 ]; then GEN_ARGS+=(--cfg-roots); fi
+if [ "$VERIFY" -eq 1 ]; then GEN_ARGS+=("${VERIFY_ARGS[@]}"); fi
+# The committed Tier-2 baseline (recomp/tier2_coverage.json), when present,
+# seeds optional AOT roots from proven interpreter call landings. Fresh
+# captures passed with --profile-manifest are merged on top for this run
+# without replacing the baseline.
+if [ "$USE_BASELINE_PROFILE" -eq 1 ] && [ -f recomp/tier2_coverage.json ]; then
+  PROFILE_ARGS+=(--profile-manifest recomp/tier2_coverage.json)
+fi
+if [ "${#PROFILE_ARGS[@]}" -gt 0 ]; then
+  GEN_ARGS+=("${PROFILE_ARGS[@]}")
+fi
+
+echo "== Generating src/gen =="
+"$PYTHON" "$CLI" generate "${GEN_ARGS[@]}"
+
+echo
+echo "Done. Build with:"
+echo "  cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j"

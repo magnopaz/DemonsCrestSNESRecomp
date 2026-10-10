@@ -1,0 +1,44 @@
+# Generated recompiler output — derived from a copyrighted ROM. Never commit.
+/src/gen/
+/recomp/funcs.h
+
+# The ROM itself, in every form. Players supply their own.
+*.sfc
+*.smc
+*.srm
+
+# Build trees and packaged output
+/build/
+/build-*/
+/dist/
+/saves/
+
+# Local probe output that names paths on one machine
+/rom_probe.json
+
+# Host post-mortem output written beside the working directory (see the
+# framework's crash-report handling). Local to one run, never the project's.
+/last_run_report.json
+/crash_report_*.json
+/crash_minidump_*.dmp
+
+# Launcher/runtime state written beside the executable (and in the repo root
+# when the game is run from there): the cached ROM path, keybinds, settings.
+# All of it is one machine's, none of it is the project's.
+/rom.cfg
+/keybinds.ini
+/config.ini
+/input.ini
+
+# Coverage captures written by the Tier-2 environment capture. Local evidence:
+# they name interpreter costs and transfers for the exact build that produced
+# them and are only meaningful next to that build.
+/coverage/
+
+# Local verification captures from the headless screenshot harness. They are
+# game imagery; keep them on this machine and out of the repository.
+/docs/verification/
+
+.DS_Store
+.vscode
+.github

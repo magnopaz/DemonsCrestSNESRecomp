@@ -1,0 +1,106 @@
+# Progressive symbol map for Demon's Crest.
+#
+# Each [[func]] names an address the analyzer should treat as a function.
+# Set emit = true to promote one into ahead-of-time codegen; leave it false
+# to keep it interpreted. tools/regen.sh syncs labels and tier choices into
+# each recomp/bankNN.cfg; only emit=true adds a func/funcs.h declaration.
+# Do not hand-edit the generated blocks in the bank configs.
+
+[[func]]
+name = "I_RESET"
+addr = "ff8f"
+bank = 0
+emit = false
+note = "Emulation RESET vector ($FFFC)"
+
+[[func]]
+name = "I_NMI"
+addr = "ffa4"
+bank = 0
+emit = false
+note = "Native NMI vector ($FFEA)"
+
+# ── Boot and scheduler entries (identified from the verified boot trace) ─────
+# The reset vector ($FF8F) jumps to $80:8000; the body validates, decompresses
+# and falls through into hardware init ending in `jmp $8179`. The scheduler is
+# the same Capcom cooperative task system Mega Man X uses: a task table at
+# $0030 with a 16-byte stride, a vblank flag at $0083, per-slot saved stacks at
+# $0032,X, and task yield/resume implemented by switching the hardware stack
+# (TSC/TCS) and jumping back into the scan loop.
+#
+# The task-switch family MUST stay interpreted (force_lle): its control flow is
+# a dynamic context switch the static analyzer cannot materialize. Promoting
+# $821E through coverage seeding was caught by the attract-route replay on
+# 2026-10-10: the boot task yielded through the recompiled body once at frame 6
+# and the attract sequence died black before frame 12000. $81A3/$81C0 (resume
+# paths), $81FE (yield return) and $8212 (slot finish) are the same family and
+# are held to LLE pre-emptively.
+[[func]]
+name = "SchedulerLoop"
+addr = "8179"
+bank = 0
+emit = false
+note = "Task scheduler scan loop; entered by JMP from $8165. LLE: dynamic context"
+
+[[func]]
+name = "TaskYield"
+addr = "821e"
+bank = 0
+emit = false
+note = "Task yield: save task S to $0032,X, restore scheduler context, JMP $8195"
+
+[[func]]
+name = "TaskResume4"
+addr = "81a3"
+bank = 0
+emit = false
+note = "Scheduler task resume path (status 4)"
+
+[[func]]
+name = "TaskResume5"
+addr = "81c0"
+bank = 0
+emit = false
+note = "Scheduler task resume path (status >= 5)"
+
+[[func]]
+name = "TaskYieldReturn"
+addr = "81fe"
+bank = 0
+emit = false
+note = "Task yield return: restore scheduler context, clear slot status"
+
+[[func]]
+name = "TaskSlotFinish"
+addr = "8212"
+bank = 0
+emit = false
+note = "Clear a task slot (STA $0030,X) and RTL"
+
+[[func]]
+name = "ResetInit"
+addr = "8000"
+bank = 0
+emit = false
+note = "Reset body ($FF8F -> $80:8000): boot validation/decompression/init"
+
+[[func]]
+name = "TaskInit"
+addr = "81e0"
+bank = 0
+emit = false
+note = "Task slot init/copy; JSL'd from 35+ spawn sites"
+
+[[func]]
+name = "NmiHandler"
+addr = "8329"
+bank = 0
+emit = false
+note = "Native NMI vector $FFA4 -> $80:8329. Multi-mode in trace"
+
+[[func]]
+name = "IrqHandler"
+addr = "8669"
+bank = 0
+emit = false
+note = "IRQ vector $FFA8 -> $80:8669. Multi-mode in trace"

@@ -1,0 +1,13 @@
+# Demon's Crest attract route — boot, story intro and the first gameplay
+# scene, with no player input. 24000 frames (~6.7 minutes of guest time) was
+# enough to reach gameplay on the verified scaffold.
+#
+# Used by the headless smoke tests and coverage capture runs:
+#   SNESRECOMP_TIER2_CAPTURE=1 SNESRECOMP_COVERAGE_DIR=... \
+#   ./build/DemonsCrestSNESRecomp "<rom>" --script scripts/routes/attract.script
+#
+# `turbo on` changes presentation pacing only (no guest frames are added),
+# so traces and captures are identical to a normal-paced run.
+turbo on
+wait 24000
+quit
