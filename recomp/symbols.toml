@@ -81,26 +81,40 @@ note = "Clear a task slot (STA $0030,X) and RTL"
 name = "ResetInit"
 addr = "8000"
 bank = 0
-emit = false
+emit = true
 note = "Reset body ($FF8F -> $80:8000): boot validation/decompression/init"
 
 [[func]]
 name = "TaskInit"
 addr = "81e0"
 bank = 0
-emit = false
+emit = true
 note = "Task slot init/copy; JSL'd from 35+ spawn sites"
 
 [[func]]
 name = "NmiHandler"
 addr = "8329"
 bank = 0
-emit = false
+emit = true
 note = "Native NMI vector $FFA4 -> $80:8329. Multi-mode in trace"
 
 [[func]]
 name = "IrqHandler"
 addr = "8669"
 bank = 0
-emit = false
+emit = true
 note = "IRQ vector $FFA8 -> $80:8669. Multi-mode in trace"
+
+[[func]]
+name = "TaskYieldFrame"
+addr = "8276"
+bank = 0
+emit = false
+note = "Yield with status 4 (suspend to next scan); JSL'd from $00:C300/$04:A0C2. LLE: context switch"
+
+[[func]]
+name = "TaskInstallResume"
+addr = "829b"
+bank = 0
+emit = false
+note = "Task install/restart with status 8; no static callers found. LLE: context switch"

@@ -19,8 +19,9 @@ logo into the game's intro. **Not yet a validated playable port** — the
 game-specific work (function naming, dispatch resolution, HLE where needed)
 starts at `src/game_rtl.c`. See [Porting from here](#porting-from-here) and
 `docs/PORTING_NOTES.md` for the verified state and the roadmap; that document
-also records the coverage-driven AOT promotion investigation and why the
-scheduler HLE comes first.
+also records the scheduler-seam fix and the validated rich AOT configuration
+(compiled game logic with the task scheduler left interpreted, per the
+framework's LLE-scheduler architecture).
 
 ## ROM identity
 

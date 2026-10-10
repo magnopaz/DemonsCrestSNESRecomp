@@ -83,25 +83,28 @@ identified.
 
 The scaffold stops where the game-specific work starts. In rough order:
 
-1. **Boot-to-game coverage.** Follow the framework doctrine: after every
-   regen, resolve dispatch misses and interpreter-gap entries before anything
-   else. Use `SNESRECOMP_STATE_TRACE`, `SNESRECOMP_FRAME_TIMING` and the
-   screenshot harness to make runs observable.
+1. **Boot-to-game coverage.** The attract route is promoted and validated;
+   extend it with input-driven routes (title → file select → first stage) and
+   capture those, then fold the captures into `recomp/tier2_coverage.json`
+   the same way. After every regen, resolve dispatch misses and
+   interpreter-gap entries before anything else. `SNESRECOMP_STATE_TRACE`,
+   `SNESRECOMP_FRAME_TIMING` and the dump/screenshot harness make runs
+   observable.
 2. **Name the code.** Add `[[func]]` entries to `recomp/symbols.toml` as
    routines are identified; `emit = true` promotes a function into AOT
    analysis. Re-run `bash tools/regen.sh` after every config change.
-3. **Promote coverage intentionally.** Seed `bank00.cfg` with discovered
-   entry points once the boot path is mapped (Mega Man X's `recomp/bank00.cfg`
-   is the reference for what a mature Capcom LoROM config looks like:
-   task entries, yield wrappers, HLE boundaries, tier-down policy).
-4. **HLE only where the general driver cannot follow.** The scaffold's
-   `src/game_rtl.c` starts on the framework's beam-aligned frame driver; it
-   is the right general driver. Add per-title HLE (scheduler, task system,
-   decompressors) only when evidence shows the driver does not fit — that is
-   where Mega Man X's `src/mmx_rtl.c` lives.
-5. **Tier 2 diagnostics.** CMakeLists has a reminder: add `TIER2` to
-   `snesrecomp_target_desktop_host` once this port reads the interpreter-gap
-   manifest after each run.
+3. **Keep the scheduler seam pinned.** The task context-switch family in
+   `recomp/symbols.toml` must stay `emit = false` (`force_lle`). Promoting any
+   member re-creates the 2026-10-10 stall; a capture can reintroduce a seed
+   for those PCs, so check new captures against the pins before regenerating.
+4. **HLE only where the general driver cannot follow.** The scheduler does not
+   need HLE: the LLE-scheduler architecture executes the coroutine switches
+   byte-exact and runs task bodies compiled. Add per-title HLE for other
+   seams only when evidence shows the general path cannot follow (example:
+   Mega Man X's `src/mmx_rtl.c` for its optional fiber scheduler).
+5. **Interpreter-gap manifest.** TIER2 is enabled in `CMakeLists.txt`; read
+   the manifest the post-mortem report carries after gameplay runs and feed
+   it back through `tools/regen.sh --profile-manifest`.
 6. **Annotations.** The framework can ingest disassembly labels through
    `snesrecomp/tools/` (see `DISASSEMBLY_AUTHORITY.md`). A partial external
    disassembly of this game exists:
@@ -141,67 +144,76 @@ scheduler entries named in `recomp/symbols.toml` (`ResetInit`,
 `SchedulerLoop`, `TaskInit`, `NmiHandler`, `IrqHandler`) were identified from
 that trace and a disassembly of the same region.
 
-**First AOT promotion attempt — reverted.** Regenerating with the capture as a
-profile manifest expanded the program from 4 roots / 11 AOT variants to
-468 roots / 4,904 AOT variants across 15 banks. The attract-route replay
-showed the promoted build skipping/blanking the intro and stalling, so the
-promotion was not kept. The investigation below is the reason.
+**Rich AOT promotion — implemented and validated.** The default
+`tools/regen.sh` now includes `recomp/tier2_coverage.json` (a 283 KB slim
+copy of the first capture, committed), and the program is generated with
+463 roots → 4,829 exact variants (4,535 AOT) across 15 banks. The
+task-switch family below stays interpreted; everything else in the captured
+route is compiled. Results are in "Rich configuration" below.
 
-## AOT promotion investigation (2026-10-10)
+## The scheduler seam (why the promotion needed a fix)
 
-Summary: under this framework revision the title must not run coverage-driven
-AOT yet. The promotion was bisected to a single observation and the failure
-class identified.
+The first promotion attempt (2026-10-10) blanked the intro and could stall:
+the analyzer had materialized members of the title's cooperative
+task-switch family, whose control flow is a dynamic context switch
+(`TSC`/`TCS` plus jumps back into the scan loop) that static analysis cannot
+prove. The complete family, found by disassembly and ROM pattern scan, is
+pinned to LLE in `recomp/symbols.toml`:
 
-- Baseline scaffold (seed cfg only): healthy through the whole 24,000-frame
-  route (461M interpreted instructions; screenshots show copyright → CAPCOM
-  logo → story text → flying intro → first gameplay scene).
-- Method: `SNESRECOMP_STATE_TRACE` is byte-identical across two runs of the
-  same build (verified), so it is a valid within-build determinism oracle.
-  Across builds with different AOT sets, traces are **not** expected to be
-  byte-identical: the frame cut lands on a slightly different instruction
-  (straight-line blocks are charged atomically) and yield/stack residue
-  differs. Route acceptance therefore used long-window WRAM deltas (`dump`
-  at frames 6000/12000/18000/24000; baseline deltas 9,163/28,567/80,855
-  bytes) plus framebuffer evidence.
-- Bisection: the stall is dose-dependent (more promoted AOT → earlier
-  failure). One discovery explains a fatal path by itself: the call
-  `$80:86DD → $80:821E` (M1X1, observed once at frame 6). `$821E` is the
-  **task yield**: it saves the task's stack pointer (`TSC` → `$0032,Y`),
-  restores the scheduler context from `$0070` and jumps back into the
-  scheduler scan. Promoting it alone reproduces the stall. With it pinned to
-  LLE the route survives, but other promoted code still blanks the display
-  mid-intro (`INIDISP=$80` at frame 12000 while the guest keeps running).
-- Cause class: `$821E`, `$81FE`, `$81A3`, `$81C0`, `$8212` are a cooperative
-  task context-switch family (dynamic `TSC`/`TCS` plus jumps into the scan
-  loop). Static materialization of that family is exactly what the analyzer
-  cannot prove; Mega Man X HLE-replaces its equivalent scheduler and yield
-  points in `src/mmx_rtl.c`. This title needs the same treatment before AOT
-  promotion is trustworthy.
-- Current state: `recomp/symbols.toml` names the boot/scheduler entries and
-  pins the task-switch family with `force_lle`; nothing is promoted (default
-  regen is seeds-only, no `recomp/tier2_coverage.json` baseline committed).
-  The verified 24,000-frame route stays healthy this way.
+| PC | Role |
+|---|---|
+| `$8179` | scheduler scan loop (`lda $0083` vblank flag; walks the 16-byte-stride task table at `$0030`) |
+| `$81A3` | resume a status-4 task (saves scheduler S to `$0070`, switches S to `$0032,Y`, pops task regs, RTL) |
+| `$81C0` | fresh dispatch / status ≥ 5 via the `$82C3` jump table |
+| `$81FE` | task yield return (restore scheduler context; clear slot status) |
+| `$8212` | clear a task slot and RTL (JSL'd from task code) |
+| `$821E` | task yield: save task S to `$0032,Y`, set status, restore scheduler context, `jmp $8195` (JSL'd from ~90 sites) |
+| `$8276` | yield with status 4 (suspend to next scan; JSL from `$00:C300`/`$04:A0C2`) |
+| `$829B` | task install/restart with status 8 (no static callers; found by pattern scan) |
+
+This matches the framework's current architecture
+(`snesrecomp/docs/LLE_SCHEDULER.md`): keep the real scheduler interpreted so
+the coroutine switches execute byte-exact, and run task bodies compiled
+through the bridge bounce. The fiber-based HLE scheduler (`src/mmx_rtl.c` in
+the Mega Man X project) is the older alternative and is being retired
+framework-wide; this port does not need it.
+
+## Rich configuration (validated 2026-10-10)
+
+| Metric | Baseline scaffold | Rich config |
+|---|---|---|
+| Analysis roots / AOT variants | 4 / 11 | 463 / 4,535 |
+| Interpreted instructions (24,000-frame route) | 461,482,934 | 361,688,593 |
+| Route WRAM deltas (6k→12k→18k→24k) | 9,163 / 28,567 / 80,855 | 9,158 / 28,562 / 80,723 |
+| Framebuffers at 12k / 24k | flying intro / gameplay | flying intro / gameplay (`inidisp=15`) |
+| Determinism (two runs, `STATE_TRACE`) | identical | identical (24,000 frames) |
+
+The remaining interpreted work is the scheduler machinery itself (the poll
+loop and context switches), which is inherent to the LLE-scheduler
+architecture. Removing it would require the retired fiber HLE path; the
+bigger wins now are gameplay coverage and features, not the scheduler tier.
 
 ## Verifying a promotion
 
 Within one build, two runs of the same route produce byte-identical
-`SNESRECOMP_STATE_TRACE` files (verified twice, matching SHA-256); that file
-is the determinism oracle, and `tools/trace_diff.py` localizes any
-difference. Across builds, acceptance is route-level:
+`SNESRECOMP_STATE_TRACE` files (verified, SHA-256); that file is the
+determinism oracle and `tools/trace_diff.py` localizes any difference.
+Across builds, acceptance is route-level: dump guest state at frames
+6000/12000/18000/24000 and require non-blank displays
+(`inidisp != $80`), baseline-like WRAM activity, and baseline-like
+framebuffers.
 
 ```sh
-# candidate run with probes (see docs for the probe script)
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
 SNESRECOMP_DUMP_DIR=/tmp/cand ./build/DemonsCrestSNESRecomp "<rom>" \
   --script <probe script with dump at 6000/12000/18000/24000>
 ```
 
-Acceptance requires baseline-like scene progression: non-blank framebuffers
-at every probe and WRAM activity in the same order of magnitude as the
-baseline's. Any stall, hang or blank screen rejects the promotion and the
-previous configuration is restored before committing — promotion is a
-decision, not a default.
+Any stall, hang or blank screen rejects the promotion and the previous
+configuration is restored before committing — promotion is a decision, not a
+default. The same probe also caught that a *partial* promotion is less
+stable than the full one (mixed AOT/interpreted bounces are timings the
+title does not tolerate as well); prefer promoting the full captured route.
 
 ## Layout reminders
 
