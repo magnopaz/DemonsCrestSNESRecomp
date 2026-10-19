@@ -104,8 +104,9 @@ sprite hooks add nothing to the 4:3 path.
 Diagnostic kill-switches for A/B captures:
 `SNESRECOMP_WS_OAM=0` (object/sprite widening),
 `SNESRECOMP_WS_HUD=0` (status-bar anchoring),
-`SNESRECOMP_WS_NOBLANK=0` (upload-cover policy) and
-`SNESRECOMP_WS_EXTRA=<px>` (fixed margin).
+`SNESRECOMP_WS_NOBLANK=0` (upload-cover policy),
+`SNESRECOMP_WS_CULL=<px>` (cap the margin object window; 0 = authentic cull)
+and `SNESRECOMP_WS_EXTRA=<px>` (fixed margin).
 
 ## Quick start (build from source)
 

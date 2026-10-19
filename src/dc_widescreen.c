@@ -357,6 +357,21 @@ static int DcOamPolicyEnabled(void) {
     return enabled;
 }
 
+/* Diagnostic/performance cap: SNESRECOMP_WS_CULL=<px> limits how far beyond
+ * the native view objects keep updating and sprites keep emitting. 0 keeps
+ * the authentic cull window (no margin objects); unset uses the live margin.
+ * Useful to measure the guest-side cost of the widened object set. */
+static int DcCullMarginOverride(void) {
+    static int value = -2;
+    if (value == -2) {
+        const char *env = getenv("SNESRECOMP_WS_CULL");
+        value = env && env[0] ? atoi(env) : -1;
+        if (value < 0)
+            value = -1;
+    }
+    return value;
+}
+
 int DcWsLiveMargin(void) {
     if (!DcOamPolicyEnabled())
         return 0;
@@ -368,7 +383,9 @@ int DcWsLiveMargin(void) {
         return 0;
     /* The left-edge window is 13 + margin pixels of a 9-bit OAM position;
      * 0xF3 - margin must stay positive (kPpuExtraLeftRight caps at 272). */
-    return g_ws_extra > 0xF0 ? 0xF0 : g_ws_extra;
+    int m = g_ws_extra > 0xF0 ? 0xF0 : g_ws_extra;
+    int cap = DcCullMarginOverride();
+    return (cap >= 0 && cap < m) ? cap : m;
 }
 
 int DcWsObjectCullMargin(void) { return DcWsLiveMargin(); }
