@@ -338,6 +338,37 @@ off), the HUD glyph tops are complete, the 4:3 mod-off path is unchanged
 render. This is the third local framework patch to upstream alongside the
 `ws_shadow` guard and the save-state driver API.
 
+## Boss statue effect: the HDMA upload cover (2026-10-19)
+
+Reported with the owner's `save3` during the first boss's awakening: the
+transformation effect -- a white/lavender silhouette that should sit on the
+statue -- was drawn ~50 lines below it, cut by the bottom edge. It is not a
+sprite or a background: layer isolation shows it on every layer because it is
+the color-math window (WH0, `$2126`/`$2127`) written per scanline by HDMA from
+the tables at `$7F:F200`/`$7F:F300`; the window masks where the math applies,
+so the math lands on whatever is beneath. The shape data starts with 127 rows
+of an empty window, then 63 rows of the silhouette: it is positioned for a
+table that runs from the top of the field.
+
+The game brackets its per-frame VRAM/OAM upload the same way it covers it with
+INIDISP: save `$420C`/`$2100`, write `$420C=0` and `$2100=$80`, move the data,
+restore both. The forced blank is dropped by the flicker policy, but the HDMA
+disable was still replayed: this frame model runs the CPU half before the
+raster walk, so the restore landed at visible line ~46 (38..52, varying with
+the frame's work) and the window's 127 empty rows put the silhouette at
+restore+127 instead of 127 -- below the statue, and jittering frame to frame.
+
+Fix, inside the same `PpuSetIgnoreForcedBlank` policy: during the replay, the
+`$420C` change that opens an upload cover (a `$420C` write immediately
+followed by a forced blank) and any `$420C` change while the cover is open are
+treated as non-display state. The field's HDMA keeps running from line 0 with
+the mask and tables the CPU half left (the restored values), which is what the
+tables were authored for. A real mid-field HDMA change without a blank still
+replays. Measured on `save3`: the silhouette now spans native y=128..190 (over
+the statue) in every sampled frame and no longer jitters; the top band stays
+absent (0 black rows in four samples); `save2` gameplay is unchanged; the 4:3
+path is untouched (policy off); two runs produce byte-identical frames.
+
 ## Spawn (Fase 5): measured, not a camera-gated spawner (2026-10-19)
 
 The plan assumed an incremental camera-driven spawner (as in MMX) whose cursor
