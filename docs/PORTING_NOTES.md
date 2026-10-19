@@ -221,6 +221,34 @@ upstreamed; `git submodule update` reverts it.** Diagnostics:
 `SNESRECOMP_WS_HISTORY=0` (fall back to raw VRAM) and `SNESRECOMP_WS_STATS=1`
 (hit/miss/fallback counters every 600 frames).
 
+## Save states: runtime execution chunk + beam-driver resume (2026-10-18)
+
+`snes_saveload` serializes the guest machine (WRAM, PPU, DMA, APU ports, beam
+registers, the legacy `Cpu`) but **not** the recomp runtime's `CpuState`
+(`g_cpu`: registers, flags, E mode, master clock) nor the interpreter bridge's
+LLE resume state. The framework streams those through the v5 game chunk
+(`RtlGameInfo.state_save_extra` / `state_load_extra` →
+`RtlSaveExecutionState` / `RtlLoadExecutionState` /
+`RtlApplyExecutionState`), the same wiring MMX uses for its scheduler fibers.
+Without it, a load in a fresh process left `g_cpu` at its reset values
+(emulation mode, S=01FF, PB=0, master clock 0); the first NMI handler decoded
+its 16-bit `LDA #$0000` as an 8-bit LDA + BRK and vectored into a `BRA` spin
+(45M cycles/frame to the interp step cap). In-game loads appeared to work only
+because the live `g_cpu` was already a valid mid-game scheduler context.
+
+`src/game_rtl.c` now implements all three hooks. Legacy saves (no chunk, e.g.
+the owner's) rebuild the native-mode scheduler context the guest's boot leaves
+behind when it `JMP`s to `$80:8179` (E=0, M=X=1, DB=PB=$80, D=0, S=01FF) and
+resume there; the scheduler then resumes each task from the loaded WRAM stacks.
+New saves carry the chunk and restore exactly (verified: frame counter, camera
+and WRAM round-trip).
+
+The beam driver also needs to be told a machine now exists:
+`snes_beam_frame_driver_state_loaded(resume_pc24)` (local patch in
+`snesrecomp/runner/src/beam_frame_driver.{c,h}`) re-arms `s_resume_pc`.
+Without it the driver's `s_resume_pc == 0` boot path ran the reset vector over
+the loaded machine. **Upstream this too**; `git submodule update` reverts it.
+
 ## Rich configuration (validated 2026-10-10)
 
 | Metric | Baseline scaffold | Rich config |
