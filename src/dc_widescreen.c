@@ -63,7 +63,16 @@ static bool DcStageGameplay(void) {
     }
     if (forced >= 0)
         return forced != 0;
-    return g_ram[0x8D] != 0 && g_ram[0x8D] < 0x80;
+    const uint8_t area = g_ram[0x8D];
+    if (area != 0 && area < 0x80)
+        return true;
+    /* The flying overworld map uses the alternate HUD variant (>= $A0) and
+     * renders in PPU Mode 7. Menus, the title and transitional screens are
+     * Mode 1 (or area 0), so this combination is the playable map and can
+     * take the widened field like a stage. */
+    if (area >= 0xA0 && g_ppu && (g_ppu->bgmode & 7) == 7)
+        return true;
+    return false;
 }
 
 static void DcClearPolicies(void) {
@@ -237,6 +246,11 @@ void DcWidescreenConfigureFrame(void) {
 
     if (!DcDisplay_IsWidescreenEnabled() || !DcDisplay_IsWidescreenActive()) {
         DcClearPolicies();
+        /* The upload-cover policy (forced blank + HDMA disable around the
+         * game's per-frame upload) is a frame-model correction, not a display
+         * width: keep it active in stage gameplay at 4:3 too. */
+        if (DcStageGameplay())
+            PpuSetIgnoreForcedBlank(g_ppu, DcNoBlankEnabled());
         return;
     }
 

@@ -29,6 +29,11 @@ using your own legally dumped ROM.
   </tr>
 </table>
 
+<p align="center">
+  <img src="docs/screenshots/mode7-map.png" width="880" alt="Demon's Crest Mode 7 overworld map in widescreen">
+  <br><strong>Mode 7 overworld</strong><br>The flying map fills the widened field, margins included.
+</p>
+
 > **You must legally own a copy of the game.** No ROM data is distributed with
 > this project, in the repository or in any release. The recompiled C is
 > generated locally from your own copy and is never committed.
@@ -38,9 +43,9 @@ using your own legally dumped ROM.
 The port boots and plays: the Capcom logo, intro, stage gameplay and boss
 fights all run from the generated C. The native **Widescreen** mod is
 implemented and validated through its final phase — background margins,
-objects and sprites, HUD anchoring, the top-band flicker and save-state
-round-trips — with the engineering notes and validation summary in
-[`docs/PORTING_NOTES.md`](docs/PORTING_NOTES.md).
+objects and sprites, HUD anchoring, the Mode 7 overworld, the top-band flicker
+and save-state round-trips — with the engineering notes and validation summary
+in [`docs/PORTING_NOTES.md`](docs/PORTING_NOTES.md).
 
 Playtesting continues; general gameplay bugs and broader coverage are the
 remaining work, so treat a full-game playthrough as not yet certified.
@@ -49,12 +54,12 @@ remaining work, so treat a full-game playthrough as not yet certified.
 
 | Available | Feature | What it adds |
 |:---------:|---------|--------------|
-| &#9745; | **Adaptive widescreen** | Native widened field with adaptive, 16:9, 21:9 and 32:9 views. Disabled by default; the authentic 4:3 path is unchanged with it off. |
+| &#9745; | **Adaptive widescreen** | Native widened field with adaptive, 16:9, 21:9 and 32:9 views. Disabled by default; with it off the game renders at the original 256-pixel width. |
 | &#9745; | **Save states** | Ten slots (`F1`–`F10` load, `Shift+F1`–`Shift+F10` save) plus the save-state browser (`F11`). Legacy and current-format saves load in a fresh process. |
 | &#9745; | **Rewind** | Rewind history (`F12`) over the shared framework's snapshot ring. |
 | &#9745; | **Launcher** | `recomp-ui` ROM picker with a verification badge, display/audio/input settings and the Mods screen. |
 | &#9745; | **ROM verification** | The ROM is checked against the project digests before anything boots; a mismatched dump is refused instead of mis-executing. |
-| &#9745; | **Authentic 4:3** | The original field, timing and rendering remain the default when the widescreen mod is off. |
+| &#9745; | **Authentic 4:3** | The original 256-pixel field and layer layout remain the default when the widescreen mod is off. |
 
 ## Widescreen
 
@@ -66,8 +71,9 @@ What it does:
 
 - renders the game directly into the widened field (`native_widescreen`), so
   the scrolling backgrounds continue into symmetric margins;
-- gates widening to stage gameplay (`$8D` in 1..0x7F): menus, cutscenes,
-  password and transitional screens stay pillarboxed;
+- gates widening to stage gameplay (`$8D` in 1..0x7F, or the Mode 7 overworld
+  map with its alternate-HUD variant): menus, cutscenes, password and
+  transitional screens stay pillarboxed;
 - widens the object-loop cull and the OAM emitter so enemies and effects just
   outside the native view keep updating and appear in the margins, and widens
   the attack projectile's on-screen test so shots fly across the whole field;
@@ -75,13 +81,18 @@ What it does:
   columns transparent, showing the scenery where the bar used to sit;
 - drops the game's forced-blank upload cover from the raster replay, which
   removes the black band that flickered at the top and lets HDMA tables start
-  at the top of the field, keeping window effects aligned with their targets.
+  at the top of the field, keeping window effects aligned with their targets;
+- keeps dialogue boxes intact: window edges parked at `[0,0]`/`[255,255]` are
+  no longer expanded into the margins, so the fixed-color box cannot leak a
+  strip into the top-left corner;
+- opens the Mode 7 overworld map to the widened field; the terrain continues
+  into the margins with no renderer change.
 
 The generated-code hooks are applied by
 [`tools/dc_apply_widescreen_hooks.py`](tools/dc_apply_widescreen_hooks.py), an
 idempotent injector run by `tools/regen.sh` and by the build. At margin 0 every
-injected expression evaluates to the authentic constant, so the 4:3 path stays
-bit-identical.
+injected expression evaluates to the authentic constant, so the object and
+sprite hooks add nothing to the 4:3 path.
 
 Diagnostic kill-switches for A/B captures:
 `SNESRECOMP_WS_OAM=0` (object/sprite widening),

@@ -367,7 +367,36 @@ tables were authored for. A real mid-field HDMA change without a blank still
 replays. Measured on `save3`: the silhouette now spans native y=128..190 (over
 the statue) in every sampled frame and no longer jitters; the top band stays
 absent (0 black rows in four samples); `save2` gameplay is unchanged; the 4:3
-path is untouched (policy off); two runs produce byte-identical frames.
+path was untouched in that measurement (policy off at the time); two runs
+produce byte-identical frames.
+
+The policy is a frame-model correction, not a display-width feature, so it is
+now enabled in stage gameplay even when the mod is off or the field is at
+native width: the statue effect lands on the statue at 4:3 too. Menus and
+transitional screens keep the authentic behaviour (`DcStageGameplay` gate,
+`SNESRECOMP_WS_NOBLANK=0` kill switch).
+
+## Mode 7 flying map in the widened field (2026-10-19)
+
+The overworld flying map renders in PPU Mode 7. It stayed pillarboxed because
+the gameplay gate accepted only `$8D` in 1..0x7F; the map runs the alternate
+HUD variant (`$8D >= $A0`). The gate now also accepts `$8D >= $A0` when the
+PPU is in Mode 7. Menus and the title use Mode 1 (`$8D=$A0`, bgmode 9 on the
+title), so they remain pillarboxed. With the gate open the Mode 7 renderer
+fills the whole widened field — no renderer change was needed; in the `save5`
+capture the map and its margins are continuous.
+
+## Dialogue boxes: parked windows and margins (2026-10-19)
+
+The dialogue box is a fixed-color color window; its text is BG3. On lines
+without the box the game leaves window 1 at `[0,0]`. The framework's
+pinned-window remap treated a 0 left edge as "the screen edge" and expanded it
+to `[-margin,0]`, opening a live window across the whole left margin; the
+fixed color then painted a purple strip at the top-left (one native pixel at
+x=0 in 4:3, 43 pixels wide with widescreen). `PpuWidescreenAdjustPinnedWindowEdges`
+now only remaps an edge when the window spans more than one native pixel, so
+`[0,0]`/`[255,255]` parked windows stay closed. The box and its text are
+unchanged; the 4:3 path returns early (no margins).
 
 ## Spawn (Fase 5): measured, not a camera-gated spawner (2026-10-19)
 
