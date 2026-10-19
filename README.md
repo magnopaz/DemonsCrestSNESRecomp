@@ -82,9 +82,10 @@ What it does:
 - drops the game's forced-blank upload cover from the raster replay, which
   removes the black band that flickered at the top and lets HDMA tables start
   at the top of the field, keeping window effects aligned with their targets;
-- keeps dialogue boxes intact: window edges parked at `[0,0]`/`[255,255]` are
-  no longer expanded into the margins, so the fixed-color box cannot leak a
-  strip into the top-left corner;
+- keeps dialogue boxes and edge windows intact: the fixed-color box cannot
+  leak a strip into the top-left corner, and a parked one-pixel layer window
+  moves with the widened edge instead of cutting a one-pixel seam at the
+  margin boundary;
 - opens the Mode 7 overworld map to the widened field; the terrain continues
   into the margins with no renderer change.
 

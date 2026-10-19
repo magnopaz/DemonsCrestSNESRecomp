@@ -398,6 +398,13 @@ now only remaps an edge when the window spans more than one native pixel, so
 `[0,0]`/`[255,255]` parked windows stay closed. The box and its text are
 unchanged; the 4:3 path returns early (no margins).
 
+The same `[0,0]` pattern appears as an **inverted layer window** on BG1/BG2 in
+one stage, excluding the leftmost screen column. Once the side margin was live
+it drew a one-pixel backdrop seam at the native edge (reproduced with
+`save0`). Parked one-pixel **layer** windows now move to the widened screen
+edge (both edges), so the exclusion sits at the far edge and the picture is
+continuous; the color window still keeps its parked one-pixel window.
+
 ## Spawn (Fase 5): measured, not a camera-gated spawner (2026-10-19)
 
 The plan assumed an incremental camera-driven spawner (as in MMX) whose cursor
