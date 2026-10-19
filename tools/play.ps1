@@ -12,7 +12,8 @@
 #   tools/play.ps1 -SkipRegen      # reuse current src/gen
 #   tools/play.ps1 -Reconfigure    # wipe the build dir and configure again
 #   tools/play.ps1 -NoRun          # build only, print the exe path
-param([switch]$NoRun, [switch]$SkipRegen, [switch]$Reconfigure)
+#   tools/play.ps1 -KillRunning    # terminate a running instance first
+param([switch]$NoRun, [switch]$SkipRegen, [switch]$Reconfigure, [switch]$KillRunning)
 $ErrorActionPreference = 'Stop'
 
 $repo = Split-Path $PSScriptRoot -Parent
@@ -50,7 +51,20 @@ $env:RUSTUP_TOOLCHAIN = '1.97.1-x86_64-pc-windows-gnu'
 $env:CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER = Join-Path $mingw 'gcc.exe'
 $env:PYTHON = (Get-Command python).Source
 
-Get-Process DemonsCrestSNESRecomp -ErrorAction SilentlyContinue | Stop-Process -Force
+$running = @(Get-Process DemonsCrestSNESRecomp -ErrorAction SilentlyContinue)
+if ($running.Count -gt 0) {
+    $pids = ($running | ForEach-Object { $_.Id }) -join ', '
+    if (-not $KillRunning) {
+        Write-Host "DemonsCrestSNESRecomp is running (PID $pids)." -ForegroundColor Yellow
+        Write-Host 'Close it first, or pass -KillRunning to terminate it.' -ForegroundColor Yellow
+        exit 1
+    }
+    # Terminating a running game is exactly how a QA session ends silently:
+    # no atexit report, no crash log, no Windows error event. Only do it when
+    # the caller asked for it.
+    $running | Stop-Process -Force
+    Start-Sleep -Milliseconds 300
+}
 
 $generated = Get-ChildItem (Join-Path $repo 'src\gen') -Filter '*.c' `
              -ErrorAction SilentlyContinue

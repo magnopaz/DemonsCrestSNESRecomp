@@ -150,7 +150,9 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
 ```
 
 `tools/play.ps1` automates regen + configure + build + launch for the Windows
-MinGW toolchain (CMake, Ninja, GCC, Rust GNU, SDL2 under `M:\SDL`).
+MinGW toolchain (CMake, Ninja, GCC, Rust GNU, SDL2 under `M:\SDL`). It refuses
+to build while a game instance is running (a forced kill would end that
+session with no exit report); pass `-KillRunning` to terminate it explicitly.
 
 The ROM does not have to live in the repository — `SNESRECOMP_ROM` sets the
 path for a shell. Without it, `tools/regen.sh` looks for
