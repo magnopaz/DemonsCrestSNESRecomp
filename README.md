@@ -78,7 +78,12 @@ What it does:
   outside the native view keep updating and appear in the margins, and widens
   the attack projectile's on-screen test so shots fly across the whole field;
 - anchors the BG3 status bar to the widened left edge and leaves the freed
-  columns transparent, showing the scenery where the bar used to sit;
+  columns transparent, showing the scenery where the bar used to sit; BG3 is
+  widened only on the bar's scanlines, so a dialogue box on the same layer
+  keeps its native columns;
+- keeps the Start/status menu pillarboxed (`$00FB` marks it): it is a
+  full-screen native UI, and widening it would show the stage tilemap in the
+  margins;
 - drops the game's forced-blank upload cover from the raster replay in every
   scene (a field that stays blank keeps its black), which removes the black
   band that flickered at the top and lets HDMA tables start at the top of the

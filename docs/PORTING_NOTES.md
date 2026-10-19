@@ -422,6 +422,22 @@ it drew a one-pixel backdrop seam at the native edge (reproduced with
 edge (both edges), so the exclusion sits at the far edge and the picture is
 continuous; the color window still keeps its parked one-pixel window.
 
+## Dialogue options and the Start menu (2026-10-19)
+
+`save0` exposed two more BG3/HUD interactions:
+
+- The HUD anchor's elastic band needs BG3 to widen on its own scanlines (the
+  band merge reaches the margins only when the layer does). Widening BG3 on
+  **all** lines also widened the dialogue box below it, whose right-edge tiles
+  wrapped into the left margin ("NO" at x=0). `PpuSetWidescreenBg3WidenRange`
+  now widens BG3 only on the band's rows `[1,48)`; the dialogue, its options
+  and other BG3 content below the band stay native.
+- The Start/status menu (`$00FB = 1` while open) is a full-screen native UI
+  on BG1/BG2; the gameplay gate kept widening it and showed the stage tilemap
+  as garbage in the margins. `DcStageGameplay()` now returns false while
+  `$00FB` is set, so the menu is pillarboxed. Verified open/closed: `$00FB`
+  toggles 1/0 with Start and the margins are clean in the status screen.
+
 ## Spawn (Fase 5): measured, not a camera-gated spawner (2026-10-19)
 
 The plan assumed an incremental camera-driven spawner (as in MMX) whose cursor

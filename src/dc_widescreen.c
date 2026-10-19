@@ -63,6 +63,11 @@ static bool DcStageGameplay(void) {
     }
     if (forced >= 0)
         return forced != 0;
+    /* The start/status menu is a full-screen native UI (its own BG1/BG2
+     * tilemap in the middle of a 32x32 map). Widening it shows the stage
+     * tilemap in the margins as garbage; $00FB is 1 while it is open. */
+    if (g_ram[0x00FB])
+        return false;
     const uint8_t area = g_ram[0x8D];
     if (area != 0 && area < 0x80)
         return true;
@@ -213,7 +218,12 @@ static void DcAnchorStatusBar(void) {
     }
     if (m > kPpuExtraLeftRight)
         m = kPpuExtraLeftRight;
-    PpuSetWidescreenBg3Widen(g_ppu, 1);
+    /* The elastic band places the bar by remapping BG3's own columns, but the
+     * band's merge only reaches the margins when BG3 is allowed to widen on
+     * those scanlines. Widen BG3 ONLY on the band's rows: the dialogue box
+     * lives on the same layer below it, and widening those rows wrapped its
+     * options into the left margin ("NO" at x=0). */
+    PpuSetWidescreenBg3WidenRange(g_ppu, 1, DC_HUD_BAND_Y1);
     PpuWsElasticSeg seg;
     seg.srcX0 = 0;
     seg.srcX1 = 256;
