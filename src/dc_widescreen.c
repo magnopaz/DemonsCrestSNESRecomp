@@ -246,11 +246,11 @@ void DcWidescreenConfigureFrame(void) {
 
     if (!DcDisplay_IsWidescreenEnabled() || !DcDisplay_IsWidescreenActive()) {
         DcClearPolicies();
-        /* The upload-cover policy (forced blank + HDMA disable around the
-         * game's per-frame upload) is a frame-model correction, not a display
-         * width: keep it active in stage gameplay at 4:3 too. */
-        if (DcStageGameplay())
-            PpuSetIgnoreForcedBlank(g_ppu, DcNoBlankEnabled());
+        /* The upload-cover policy (transient forced blank + HDMA disable
+         * around the game's per-frame upload) is a frame-model correction,
+         * not a display width: keep it active at 4:3 and in every scene. The
+         * replay keeps a real field-long blank (no later unblank). */
+        PpuSetIgnoreForcedBlank(g_ppu, DcNoBlankEnabled());
         return;
     }
 
@@ -265,7 +265,7 @@ void DcWidescreenConfigureFrame(void) {
         PpuSetWsHudOamShiftRange(g_ppu, 0, 0);
         PpuSetWsHudOamShiftRange2(g_ppu, 0, 0);
         PpuSetWidescreenLayerElasticBand(g_ppu, 2, 0, 0, NULL, 0);
-        PpuSetIgnoreForcedBlank(g_ppu, false);
+        PpuSetIgnoreForcedBlank(g_ppu, DcNoBlankEnabled());
         PpuSetWidescreenLineEnhancer(g_ppu, NULL, NULL);
         return;
     }

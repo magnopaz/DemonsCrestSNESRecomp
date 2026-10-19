@@ -328,15 +328,32 @@ guest's `$2100=$80` writes (fragile). Awaiting the owner's choice.
 `PpuSetIgnoreForcedBlank` (`ppu->wsIgnoreForcedBlank`, outside the savestate
 ranges). When set, `ppu_rasterApplyLine` drops INIDISP writes with bit 7 set
 from the render replay and `ppu_rasterRenderBegin` starts the walk with bit 7
-of the baseline cleared; brightness writes (fades) still replay. The game
-enables it only in stage gameplay with widescreen
-(`DcWidescreenConfigureFrame`), so transitional fields keep the authentic
-blank; kill switch `SNESRECOMP_WS_NOBLANK=0`. Verified: 20 captured frames in
-the owner's scene 3 show **0** black top rows (vs 9/20/9/18/20 with the switch
-off), the HUD glyph tops are complete, the 4:3 mod-off path is unchanged
-(policy off -> the authentic 9/20/9 pattern returns) and the intro fades still
-render. This is the third local framework patch to upstream alongside the
-`ws_shadow` guard and the save-state driver API.
+of the baseline cleared; brightness writes (fades) still replay. The policy
+now runs in **every scene** and at 4:3: the first scene showed the top-band
+flicker again because it used to be gameplay-only. To keep real transitions
+authentic, the replay drops a forced blank only when the **same field unblanks
+later** (the upload cover); a field whose last INIDISP write is still a forced
+blank stays black. Kill switch `SNESRECOMP_WS_NOBLANK=0`.
+
+Verified: 20 captured frames in the owner's scene 3 show **0** black top rows
+(vs 9/20/9/18/20 with the switch off), the HUD glyph tops are complete, the
+4:3 mod-off path is unchanged (policy off -> the authentic 9/20/9 pattern
+returns) and the intro fades still render. On `save1` (first scene) the
+sampled frames show 0 black top rows as well, while the menus keep fading.
+This is the third local framework patch to upstream alongside the `ws_shadow`
+guard and the save-state driver API.
+
+## QA diagnostics: console and previous run report (2026-10-19)
+
+The Windows executable is GUI-subsystem, so a terminal launch had no console
+handles and every diagnostic (crash banner, exit reason) was invisible.
+`host_main` now attaches to the parent console when one exists and reopens
+stdout/stderr, prints `exit: <reason> after N frames`, and preserves the
+previous run's `last_run_report.json` as `last_run_report.prev.json` at
+startup — a run that ended unexpectedly survives the next launch. SEH/signal
+crashes still write `crash_report_*.json` and `crash_minidump_*.dmp` beside
+the executable.
+
 
 ## Boss statue effect: the HDMA upload cover (2026-10-19)
 

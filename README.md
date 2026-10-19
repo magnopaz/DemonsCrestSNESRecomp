@@ -79,9 +79,10 @@ What it does:
   the attack projectile's on-screen test so shots fly across the whole field;
 - anchors the BG3 status bar to the widened left edge and leaves the freed
   columns transparent, showing the scenery where the bar used to sit;
-- drops the game's forced-blank upload cover from the raster replay, which
-  removes the black band that flickered at the top and lets HDMA tables start
-  at the top of the field, keeping window effects aligned with their targets;
+- drops the game's forced-blank upload cover from the raster replay in every
+  scene (a field that stays blank keeps its black), which removes the black
+  band that flickered at the top and lets HDMA tables start at the top of the
+  field, keeping window effects aligned with their targets;
 - keeps dialogue boxes and edge windows intact: the fixed-color box cannot
   leak a strip into the top-left corner, and a parked one-pixel layer window
   moves with the widened edge instead of cutting a one-pixel seam at the
@@ -236,7 +237,10 @@ Rules for contributors:
 
 Open an issue with the build, the enabled mods and the steps to reproduce the
 problem. For gameplay bugs, attach the save state (`build/saves/saveN.sav`)
-and describe the inputs that trigger it.
+and describe the inputs that trigger it. If the game closes unexpectedly,
+also attach `last_run_report.prev.json` (the previous run's report, preserved
+on the next launch) and any `crash_report_*.json` / `crash_minidump_*.dmp`
+from the build directory.
 
 [github.com/magnopaz/DemonsCrestSNESRecomp/issues](https://github.com/magnopaz/DemonsCrestSNESRecomp/issues)
 
