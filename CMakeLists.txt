@@ -66,6 +66,26 @@ snesrecomp_rom_identity(DemonsCrestSNESRecomp ${CMAKE_SOURCE_DIR}/rom_identity.t
 # still a hard error (the framework owns the message).
 snesrecomp_target_generated_code(DemonsCrestSNESRecomp ${CMAKE_SOURCE_DIR}/src/gen)
 
+# Fase 4 widescreen hooks: the object loop's cull window is widened by the live
+# margin (src/dc_widescreen.c). The generated code is re-derived by
+# tools/regen.sh, so the injector runs as a build step and the generated
+# objects depend on it (editing the script invalidates them). Same pattern as
+# the MMX project's tools/apply_overrides.py. Idempotent; fails loudly if an
+# anchor disappears.
+if(NOT SNESRECOMP_SETUP_HOST)
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    file(GLOB dc_generated ${CMAKE_SOURCE_DIR}/src/gen/*.c)
+    set_property(SOURCE ${dc_generated} APPEND PROPERTY OBJECT_DEPENDS
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/dc_apply_widescreen_hooks.py)
+    add_custom_target(DemonsCrestSNESRecomp_ws_hooks
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/dc_apply_widescreen_hooks.py
+                --gen-dir ${CMAKE_SOURCE_DIR}/src/gen
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        COMMENT "Applying Demon's Crest generated-code widescreen hooks" VERBATIM)
+    add_dependencies(DemonsCrestSNESRecomp DemonsCrestSNESRecomp_ws_hooks)
+endif()
+
 # The mod catalog. This names WHERE the packages are; the framework owns the
 # layout they are staged into beside the executable, and stages them on every
 # build OF THE EXECUTABLE -- including the launcher's own Generate & rebuild on

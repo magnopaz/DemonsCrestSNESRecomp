@@ -72,6 +72,9 @@ static void DcClearPolicies(void) {
     PpuSetWidescreenBg3Widen(g_ppu, 0);
     PpuSetWsHudOamShiftRange(g_ppu, 0, 0);
     PpuSetWsHudOamShiftRange2(g_ppu, 0, 0);
+    PpuSetWidescreenHudSplit(g_ppu, 0, 0, 0);
+    PpuSetWidescreenLayerElasticBand(g_ppu, 2, 0, 0, NULL, 0);
+    PpuSetIgnoreForcedBlank(g_ppu, false);
     PpuSetWidescreenLineEnhancer(g_ppu, NULL, NULL);
 }
 
@@ -156,6 +159,78 @@ static void DcMaybePrintMarginStats(void) {
             (unsigned long long)bg2.westFold, (unsigned long long)bg2.eastFold);
 }
 
+/* ───────────────────────── Fase 6: status bar (BG3) ───────────────────────
+ *
+ * BG3 carries only the status bar: a left-anchored strip in the upper-left.
+ * The VRAM map ($5800, 32x32) holds it on rows 1..5 (native y 8..47) at map
+ * columns 3..29 (native x 24..239) — measured from a save-state dump; the rest
+ * of the map is empty. In the widened field the bar would sit at native x 24,
+ * leaving the whole left margin empty to its left.
+ *
+ * On the bar's scanlines BG3 is remapped as ONE RIGID segment shifted left by
+ * the live margin (source [0,256) -> destination [-margin, 256-margin)): the
+ * bar hugs the left edge of the widened field, and every column the remap does
+ * not cover stays transparent, so the scenery shows through where the bar used
+ * to sit. Below the band BG3 keeps its authentic position.
+ *
+ * The band is re-applied every frame (ppu_reset zeroes it). margin 0 is the
+ * identity remap, i.e. the authentic 4:3 layout; SNESRECOMP_WS_HUD=0 disables
+ * it. BG3 must be allowed into the widened line (PpuSetWidescreenBg3Widen) for
+ * the band to be live: PpuWidescreenLayerExtra gates it, and the band's merge
+ * then ignores the layer's own margin content and copies only the shifted
+ * source span. That is also why BG3 is no longer clamped in gameplay — the
+ * remap, not the clamp, keeps it in place.
+ */
+enum {
+    DC_HUD_BAND_Y0 = 0,
+    DC_HUD_BAND_Y1 = 48,
+};
+
+static int DcHudAnchorEnabled(void) {
+    static int enabled = -1;
+    if (enabled < 0) {
+        const char *env = getenv("SNESRECOMP_WS_HUD");
+        enabled = env && env[0] ? (env[0] != '0') : 1;
+    }
+    return enabled;
+}
+
+static void DcAnchorStatusBar(void) {
+    int m = g_ws_extra;
+    if (!DcHudAnchorEnabled() || m <= 0) {
+        PpuSetWidescreenBg3Widen(g_ppu, 0);
+        PpuSetWidescreenLayerElasticBand(g_ppu, 2, 0, 0, NULL, 0);
+        return;
+    }
+    if (m > kPpuExtraLeftRight)
+        m = kPpuExtraLeftRight;
+    PpuSetWidescreenBg3Widen(g_ppu, 1);
+    PpuWsElasticSeg seg;
+    seg.srcX0 = 0;
+    seg.srcX1 = 256;
+    seg.dstX0 = (int16_t)(-m);
+    seg.dstX1 = (int16_t)(256 - m);
+    PpuSetWidescreenLayerElasticBand(g_ppu, 2, DC_HUD_BAND_Y0, DC_HUD_BAND_Y1,
+                                     &seg, 1);
+}
+
+/* Fase 7-ish (2026-10-19): the game covers its per-frame uploads with INIDISP
+ * forced blank ($2100 = $80) and a "present" task unblanks later. This frame
+ * model runs the CPU half before the raster walk, so the upload is never
+ * visible; replaying the blank only darkens the first N visible lines, and N
+ * varies with the frame's work (the top-of-screen band flicker the owner
+ * reported). PpuSetIgnoreForcedBlank drops those writes from the render
+ * replay while leaving brightness fades alone. Gameplay only: transitional
+ * fields keep the authentic blank. SNESRECOMP_WS_NOBLANK=0 disables it. */
+static int DcNoBlankEnabled(void) {
+    static int enabled = -1;
+    if (enabled < 0) {
+        const char *env = getenv("SNESRECOMP_WS_NOBLANK");
+        enabled = env && env[0] ? (env[0] != '0') : 1;
+    }
+    return enabled;
+}
+
 void DcWidescreenConfigureFrame(void) {
     if (!g_ppu)
         return;
@@ -175,20 +250,24 @@ void DcWidescreenConfigureFrame(void) {
         PpuSetWidescreenBg3Widen(g_ppu, 0);
         PpuSetWsHudOamShiftRange(g_ppu, 0, 0);
         PpuSetWsHudOamShiftRange2(g_ppu, 0, 0);
+        PpuSetWidescreenLayerElasticBand(g_ppu, 2, 0, 0, NULL, 0);
+        PpuSetIgnoreForcedBlank(g_ppu, false);
         PpuSetWidescreenLineEnhancer(g_ppu, NULL, NULL);
         return;
     }
 
     /* Stage gameplay.
-     * BG3 (layer index 2) is the status bar: keep it in the authentic
-     * columns until Fase 6 anchors the bar to the widened left edge.
-     * BG1/BG2 extend into the margins. */
-    PpuSetWidescreenLayerClamp(g_ppu, 0x04);
+     * BG3 (layer index 2) is the status bar: DcAnchorStatusBar() remaps it to
+     * the widened left edge on the bar's scanlines (Fase 6). BG1/BG2 extend
+     * into the margins. */
+    PpuSetWidescreenLayerClamp(g_ppu, 0);
     PpuSetWidescreenLayerMask(g_ppu, 0);
     PpuSetWidescreenBg3Widen(g_ppu, 0);
     PpuSetWsHudOamShiftRange(g_ppu, 0, 0);
     PpuSetWsHudOamShiftRange2(g_ppu, 0, 0);
     PpuSetWidescreenLineEnhancer(g_ppu, NULL, NULL);
+    DcAnchorStatusBar();
+    PpuSetIgnoreForcedBlank(g_ppu, DcNoBlankEnabled());
 
     /* World-keyed margin history. BG1's world origin is the game camera
      * ($C0/$C4, 16-bit); BG2's is its own parallax mirror ($C2/$C6). The
@@ -211,3 +290,61 @@ void DcWidescreenAfterRaster(void) {
     WsShadowFrame(g_ppu);
     DcMaybePrintMarginStats();
 }
+
+/* ─────────────────────── Fase 4: objects and sprites ──────────────────────
+ *
+ * The authentic object loop (bank $82) culls an object when its camera-
+ * relative position leaves a fixed window:
+ *
+ *     dx = objX - camX;   keep if (dx + 0x60) < 0x1C0      (X)
+ *     dy = objY - camY;   keep if (dy + 0x60) < 0x1A0      (Y)
+ *
+ * i.e. dx in [-0x60, 0x160) = [-96, 352): the 256-px native view plus 96 px
+ * of slack on each side (sprite widths, activation). The injected hook
+ * (tools/dc_apply_widescreen_hooks.py) replaces the two constants with
+ * 0x60 + margin and 0x1C0/0x1A0 + 2*margin, which widens BOTH sides by
+ * `margin` without moving the window's base. At margin 0 the expressions
+ * evaluate to the authentic constants, so the 4:3 path stays bit-identical.
+ *
+ * The kept object then computes its screen X/Y ($10/$12), sets its visible
+ * bit ($00 bit 4) and writes its OAM entry — which is what puts it in the
+ * margins.
+ *
+ * The sprite emitter (the bank $80/$00 function at $F689, an AOT root) is
+ * the other half: its X test at $F755 hides every sprite whose 9-bit OAM X is
+ * >= 256 with a low byte < 0xF3. The injected hook keeps the right margin
+ * (low byte < margin) and the widened left-edge window (low byte >=
+ * 0xF3 - margin) instead, so sprites that the authentic frame clips at the
+ * screen edge survive in the margins; everything else keeps the authentic
+ * $E0 hide. The framework decodes 256..256+extra as positive (right margin)
+ * and >= that as the wrapped left margin (PpuDecodeOamX).
+ *
+ * Gate: the margins are only widened during stage gameplay with widescreen
+ * on — a pillarboxed cutscene must not reveal objects the authentic frame
+ * hides. SNESRECOMP_WS_OAM=0 disables both halves for A/B captures.
+ */
+
+static int DcOamPolicyEnabled(void) {
+    static int enabled = -1;
+    if (enabled < 0) {
+        const char *env = getenv("SNESRECOMP_WS_OAM");
+        enabled = env && env[0] ? (env[0] != '0') : 1;
+    }
+    return enabled;
+}
+
+int DcWsLiveMargin(void) {
+    if (!DcOamPolicyEnabled())
+        return 0;
+    if (!DcDisplay_IsWidescreenEnabled() || !DcDisplay_IsWidescreenActive())
+        return 0;
+    if (!DcStageGameplay())
+        return 0;
+    if (g_ws_extra <= 0)
+        return 0;
+    /* The left-edge window is 13 + margin pixels of a 9-bit OAM position;
+     * 0xF3 - margin must stay positive (kPpuExtraLeftRight caps at 272). */
+    return g_ws_extra > 0xF0 ? 0xF0 : g_ws_extra;
+}
+
+int DcWsObjectCullMargin(void) { return DcWsLiveMargin(); }

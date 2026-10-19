@@ -249,6 +249,121 @@ The beam driver also needs to be told a machine now exists:
 Without it the driver's `s_resume_pc == 0` boot path ran the reset vector over
 the loaded machine. **Upstream this too**; `git submodule update` reverts it.
 
+## Widescreen objects/sprites in the margins (Fase 4, 2026-10-19)
+
+Two guest-side tests kept objects and their sprites inside the authentic
+256-px window; both are widened by the live margin through
+`tools/dc_apply_widescreen_hooks.py` (idempotent generated-code injector, run
+by the build as `DemonsCrestSNESRecomp_ws_hooks` and by `tools/regen.sh`; it
+fails loudly if an anchor disappears):
+
+- the bank `$82` object loop's cull (`dx + 0x60 < 0x1C0` X, `dy + 0x60 <
+  0x1A0` Y — the same code is also emitted under the bank `$02` mirror, and
+  the injector patches both);
+- the sprite emitter's X test (function `$F689`, an AOT root): the authentic
+  test hides every 9-bit OAM X >= 256 with low byte < `$F3`; the injected one
+  keeps the right margin (low < margin) and the widened left-edge window
+  (low >= `0xF3 - margin`).
+
+`DcWsObjectCullMargin()` (`src/dc_widescreen.c`) returns 0 unless widescreen
+is on AND active AND the stage gameplay gate passes, so a pillarboxed
+cutscene cannot reveal hidden objects; `SNESRECOMP_WS_OAM=0` disables both
+hooks. At margin 0 the injected expressions evaluate to the authentic
+constants (verified: WRAM byte-identical to the unpatched build over the area
+2 route). End-to-end: enemies just outside the native view now appear drawn
+in the right margin.
+
+A third injected patch (`patch_screen_test`, marker `/*DCWS5*/`) widens the
+"is this object on screen?" helper at `$82:E6AC`, which the attack/hit path
+uses to despawn a shot: the authentic test keeps a coordinate only while its
+high byte is zero (`and #$FF00`), i.e. inside [0,255]. The owner's save2
+reproduction showed the fireball dying at dx=+257 / dx=-1 (the native edges);
+the widened test keeps [-margin, 255+margin), so the projectile now flies
+through the whole margin and dies at dx=+299 / dx=-44 (the wide field's
+edges). Located with the trace build's debug server
+(`-DSNESRECOMP_ENABLE_TRACE=ON`, `build-trace/`): a WRAM watch on the object's
+flags at `$1080` reported the killer block `$82:E49E` and its caller
+`$82:E6AC`.
+
+## Status bar anchored to the widened left edge (Fase 6, 2026-10-19)
+
+BG3 carries only the status bar: map rows 1..5 (native y 8..47), map columns
+3..29 (native x 24..239) of the VRAM map at `$5800`; the rest of the map is
+empty. On the bar's scanlines BG3 is remapped as one rigid elastic segment
+shifted left by the live margin (`PpuSetWidescreenLayerElasticBand(2, 0, 48,
+{0,256,-m,256-m}, 1)`): the bar hugs the left edge of the widened field and
+the columns the remap does not cover stay transparent, so the scenery shows
+through where the bar used to sit. BG3 is no longer clamped in gameplay (the
+remap keeps it in place) and `PpuSetWidescreenBg3Widen(1)` makes the band
+live. `SNESRECOMP_WS_HUD=0` restores the authentic position; margin 0 is the
+identity remap.
+
+## Top-of-screen black band flicker (investigated 2026-10-19)
+
+Reported as a black bar at the top that appears/disappears between frames.
+Measured with per-frame BMP captures and the PPU register-write journal
+(`*.ppuw.tsv` from `SNESRECOMP_DUMP_DIR`):
+
+- **Not widescreen-related**: identical at 4:3 with the mod disabled, and the
+  older Fase 3 captures (`walk_world`) already show it.
+- The NMI handler finishes inside vblank (ends at beam v=232..238, +10.9k..+19k
+  master cycles).
+- The journal shows the real mechanism: the game forces blank
+  (`$2100=$80`) in the NMI handler and a "present" task writes `$0F` back
+  ~64k cycles (good frames -> visible line ~9) to ~80k cycles (busier frames ->
+  line ~19..21) after the frame boundary. The HUD's empty top border is ~8
+  lines, so the good case is invisible and the busy case clips the glyph tops.
+- Steady gameplay jitter is 9..12 lines; the large 19..21 case is
+  transitions/level start.
+- The framework's DMA model is hardware-accurate (8 master cycles/byte); the
+  remaining difference is guest execution timing, which needs a reference trace
+  (Mesen) that is not installed here.
+
+Options: leave it (game behaviour), drop the forced-blank bit from the raster
+journal (the render runs after the CPU half, so the upload cover is redundant;
+brightness fades still work -- changes emulation semantics), or patch the
+guest's `$2100=$80` writes (fragile). Awaiting the owner's choice.
+
+**Chosen and implemented (option 2)**: new PPU flag
+`PpuSetIgnoreForcedBlank` (`ppu->wsIgnoreForcedBlank`, outside the savestate
+ranges). When set, `ppu_rasterApplyLine` drops INIDISP writes with bit 7 set
+from the render replay and `ppu_rasterRenderBegin` starts the walk with bit 7
+of the baseline cleared; brightness writes (fades) still replay. The game
+enables it only in stage gameplay with widescreen
+(`DcWidescreenConfigureFrame`), so transitional fields keep the authentic
+blank; kill switch `SNESRECOMP_WS_NOBLANK=0`. Verified: 20 captured frames in
+the owner's scene 3 show **0** black top rows (vs 9/20/9/18/20 with the switch
+off), the HUD glyph tops are complete, the 4:3 mod-off path is unchanged
+(policy off -> the authentic 9/20/9 pattern returns) and the intro fades still
+render. This is the third local framework patch to upstream alongside the
+`ws_shadow` guard and the save-state driver API.
+
+## Spawn (Fase 5): measured, not a camera-gated spawner (2026-10-19)
+
+The plan assumed an incremental camera-driven spawner (as in MMX) whose cursor
+would need widening. Measurement in area 2 shows Demon's Crest loads a room's
+objects at room entry: the object list already holds every room object when
+the camera is at 0 (including one at dx=280..330, outside the native view),
+and walking the camera 0→207 with 10-frame sampling adds no new room objects —
+only gameplay effects (ghost attacks) created inside the view. So there is no
+native-edge spawn gate to widen here; objects outside the view already exist
+and the Fase 4 cull keeps them updating, which is what makes them appear in
+the margins. Reopen only if some stage shows objects *appearing* at dx≈256;
+the ~13 `TaskInit` ($80:81E0) call sites in banks 0x85/0x83/0x84/0xBE/0x02/0x03
+are the starting point (the camera reads in those banks are the $C0→$C2
+parallax, not spawn gates).
+
+## Phase 7 validation summary (2026-10-19)
+
+Full matrix in `docs/WIDESCREEN.md`. Highlights: determinism (two runs,
+`SNESRECOMP_STATE_TRACE`, 351 frames, byte-identical SHA-256); 4:3 center
+bit-identical (3 frames, 0 diffs, object/HUD/blank policies off) and WRAM
+byte-identical to the unpatched build at margin 0; `SNESRECOMP_WS_EXTRA=43`
+frame byte-identical to the normal 16:9 output; a save loaded 300 frames into
+a run produces the same WRAM as a cold load; the new-format save round-trip
+and the intro fades render correctly. HUD states beyond full health/magic and
+a left-margin trailing-object capture remain as documented limitations.
+
 ## Rich configuration (validated 2026-10-10)
 
 | Metric | Baseline scaffold | Rich config |

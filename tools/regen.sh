@@ -106,6 +106,12 @@ fi
 echo "== Generating src/gen =="
 "$PYTHON" "$CLI" generate "${GEN_ARGS[@]}"
 
+# Fase 4 widescreen hooks: widen the object loop's cull window in the freshly
+# generated bank $82 code (idempotent; the build also runs it as a build step).
+echo
+echo "== Injecting widescreen hooks =="
+"$PYTHON" tools/dc_apply_widescreen_hooks.py --gen-dir src/gen
+
 echo
 echo "Done. Build with:"
 echo "  cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j"

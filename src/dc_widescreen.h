@@ -37,6 +37,20 @@ void DcWidescreenConfigureFrame(void);
  * lands (plano, Fase 3). */
 void DcWidescreenAfterRaster(void);
 
+/*
+ * Fase 4 — objects and sprites in the margins.
+ *
+ * DcWsObjectCullMargin() is called by the injected generated-code hooks (the
+ * bank $82 object loop's cull window and the bank $00/$80 sprite emitter's X
+ * test): it widens both by this many pixels per side. 0 restores the
+ * authentic windows exactly (the injected expressions then evaluate to the
+ * original constants), so the 4:3 path stays bit-identical. Gated by
+ * DcWsLiveMargin(): widescreen enabled AND active AND the stage gameplay
+ * gate; SNESRECOMP_WS_OAM=0 disables both hooks.
+ */
+int DcWsObjectCullMargin(void);
+int DcWsLiveMargin(void);
+
 #ifdef __cplusplus
 }
 #endif
