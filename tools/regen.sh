@@ -90,9 +90,12 @@ GEN_ARGS=(--rom "$ROM" --cfg-dir recomp --out-dir src/gen
 if [ "$CFG_ROOTS" -eq 1 ]; then GEN_ARGS+=(--cfg-roots); fi
 if [ "$VERIFY" -eq 1 ]; then GEN_ARGS+=("${VERIFY_ARGS[@]}"); fi
 # The committed Tier-2 baseline (recomp/tier2_coverage.json), when present,
-# seeds optional AOT roots from proven interpreter call landings. Fresh
-# captures passed with --profile-manifest are merged on top for this run
-# without replacing the baseline.
+# seeds optional AOT roots from proven interpreter call landings. It is the
+# persistent seed record: AOT bodies no longer show up as interpreter
+# fallbacks, so a fresh capture cannot re-derive them. Fold new route captures
+# into it with tools/merge_coverage.py (which stamps the newest capture's
+# identity so the emitter accepts the file as --profile-manifest), then pass
+# additional current-build captures with --profile-manifest as needed.
 if [ "$USE_BASELINE_PROFILE" -eq 1 ] && [ -f recomp/tier2_coverage.json ]; then
   PROFILE_ARGS+=(--profile-manifest recomp/tier2_coverage.json)
 fi

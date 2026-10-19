@@ -1,0 +1,25 @@
+# Demon's Crest: title -> new game -> intro -> first playable stage segment.
+#
+# No-input attract reaches the title screen at ~frame 24000. One Start starts
+# a new game (the story intro, $8D = 0xA0 + room). The intro runs ~20000
+# frames of cutscene rooms; the first playable stage segment (area 2, the
+# graveyard where Firebrand lands) begins around frame 44000. `until` anchors
+# the route to the game state instead of the frame count, so a change in
+# intro timing cannot silently walk the route off its target.
+#
+# Used by the widescreen work to prove the gameplay gate ($8D in 1..0x7F)
+# and to capture coverage for the stage engine:
+#   SNESRECOMP_TIER2_CAPTURE=1 SNESRECOMP_COVERAGE_DIR=coverage/gameplay \
+#   ./build/DemonsCrestSNESRecomp "<rom>" --script scripts/routes/gameplay.script
+#
+# `turbo on` changes presentation pacing only (no guest frames are added), so
+# traces and captures are identical to a normal-paced run. The dump lands on
+# the first frame the stage engine owns; set SNESRECOMP_DUMP_DIR to collect it.
+turbo on
+wait 24000
+press start 4
+until 008D == 02 60000
+dump stage_start
+wait 600
+dump stage_600
+quit

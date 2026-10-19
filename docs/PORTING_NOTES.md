@@ -178,6 +178,49 @@ through the bridge bounce. The fiber-based HLE scheduler (`src/mmx_rtl.c` in
 the Mega Man X project) is the older alternative and is being retired
 framework-wide; this port does not need it.
 
+## Gameplay route and stage coverage (2026-10-18)
+
+`scripts/routes/gameplay.script` is the first input-driven route: title
+(~frame 24000) → Start starts a new game → ~20000 frames of cutscene rooms
+(`$8D = 0xA0 + room`) → the first playable stage segment (`$8D = 2`, the
+graveyard) at frame 43659, anchored with `until 008D == 02`. The route walks
+right and leaves guest state at `stage_start`/`stage_600` dumps; both are
+byte-identical across two runs of the same build (WRAM SHA-256), and the
+attract route still passes.
+
+Coverage: attract and gameplay captures were folded into
+`recomp/tier2_coverage.json` (1,023 rows) with `tools/merge_coverage.py`.
+The committed baseline is the persistent seed record — code that is already
+AOT never reappears as an interpreter fallback, so a fresh capture cannot
+re-derive it. The merge tool unions rows, drops per-build `costs`/
+`ram_routines`, and stamps the newest capture's identity so the file is a
+valid `--profile-manifest` for the current build. Regen moved the program to
+**484 roots / 4,935 AOT variants** (from 463 / 4,535); the rebuild was
+re-verified with the routes above. `tools/regen.sh` passes the merged file as
+the baseline profile.
+
+## Widescreen margin history and the framework guard patch (2026-10-18)
+
+The widescreen mod serves BG1/BG2 margins from the framework's world-keyed
+tilemap store (`snes/ws_shadow.c`) instead of the streamed VRAM window: the
+native viewport sweep plus the game's own VRAM uploads at write time
+(`WsShadowOnVramWrite`) keep ahead-of-view content available. World-row keys
+(no `retainHistory`) are required: the retain variant keys rows by viewport
+index, which the write capture does not, so staged uploads were never read
+(measured east-margin hits 14% retain vs 85–87% world; west 99.9%).
+
+`WsShadowTile` was patched locally (`snesrecomp/runner/src/snes/ws_shadow.c`)
+so a chunk that straddles the native edge is rendered from the renderer's own
+tile instead of the history. Demon's Crest updates map columns the moment
+they reach the native edge, so the straddling cell could hold content the
+sweep had not observed; with history serving it, native columns x=0..5 and
+x=251..255 differed from the authentic frame. The guard now serves history
+only for chunks entirely outside [0,256), which keeps the center bit-exact at
+the cost of at most a one-tile seam inside the margin. **This patch must be
+upstreamed; `git submodule update` reverts it.** Diagnostics:
+`SNESRECOMP_WS_HISTORY=0` (fall back to raw VRAM) and `SNESRECOMP_WS_STATS=1`
+(hit/miss/fallback counters every 600 frames).
+
 ## Rich configuration (validated 2026-10-10)
 
 | Metric | Baseline scaffold | Rich config |

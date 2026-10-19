@@ -23,6 +23,12 @@ also records the scheduler-seam fix and the validated rich AOT configuration
 (compiled game logic with the task scheduler left interpreted, per the
 framework's LLE-scheduler architecture).
 
+A **Widescreen** mod (default off) is staged in the preloaded catalog with its
+presentation plumbing in place: field width, aspect option and per-frame scene
+policy. With it off the authentic 4:3 path is unchanged. The engine survey and
+the phased plan (backgrounds, sprites, spawn, HUD, validation) live in
+[docs/WIDESCREEN_PLAN.md](docs/WIDESCREEN_PLAN.md).
+
 ## ROM identity
 
 | | |
@@ -48,6 +54,19 @@ bash tools/regen.sh --rom /path/to/Demon's Crest (USA).sfc
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 ```
+
+The default desktop backend is SDL3 (fetched and built from source when no
+package is installed). To build against an installed SDL2 development package
+instead — for example the MinGW one at `M:\SDL` on Windows:
+
+```sh
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DSNESRECOMP_SDL_BACKEND=SDL2 \
+  -DSDL2_DIR="M:/SDL/SDL2-2.32.6/x86_64-w64-mingw32/lib/cmake/SDL2"
+```
+
+`tools/play.ps1` automates regen + configure + build + launch for the Windows
+MinGW toolchain (CMake, Ninja, GCC, Rust GNU, SDL2 under `M:\SDL`).
 
 The ROM does not have to live in the repository — keeping it on your own
 drive is the better habit, and `SNESRECOMP_ROM` sets the path once for a

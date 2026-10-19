@@ -1,0 +1,44 @@
+format_version = 1
+id = "demons-crest.enhancement.widescreen"
+version = "1.0.0"
+name = "Demon's Crest Widescreen"
+author = "Magno Paz"
+description = "Extend the stage view to the widescreen field with your selected view aspect. Presentation-only: emulated state and encounter timing are unchanged."
+license = "MIT"
+resolver = "declarative"
+save_compatibility = "shared"
+
+[[target]]
+game_id = "demonscrest-usa"
+rom_sha256 = "18d40a807d5f88c5b6a1ad849eec7e0f189225d9a1586037c850f6680b5844de"
+
+[[feature]]
+id = "widescreen"
+name = "Widescreen"
+description = "Show the stage beyond the authentic 256-column view; the status bar stays readable."
+group = "Display"
+default_enabled = false
+
+[[option]]
+feature = "widescreen"
+id = "aspect"
+label = "View aspect ratio"
+description = "Fit the view to the window, or select a fixed ratio. Settings > Display Aspect controls pixel proportions in every mode."
+type = "choice"
+default = "adaptive"
+[[option.choice]]
+value = "adaptive"
+label = "Adaptive"
+[[option.choice]]
+value = "16:9"
+label = "16:9"
+[[option.choice]]
+value = "21:9"
+label = "21:9"
+[[option.choice]]
+value = "32:9"
+label = "32:9"
+
+[[plugin]]
+feature = "widescreen"
+id = "demons-crest.widescreen"

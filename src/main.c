@@ -27,6 +27,9 @@
 
 #include "host_main.h"
 #include "game_rtl.h"
+#include "dc_display.h"
+#include "dc_widescreen.h"
+#include "desktop/config.h"
 #include "snesrecomp_rom_identity.h"  /* generated from rom_identity.txt */
 
 #ifndef __ANDROID__
@@ -42,6 +45,37 @@
 #define SNES_GAME_VERSION "dev"
 #endif
 
+/*
+ * Widescreen presentation hooks. docs/WIDESCREEN_PLAN.md: the mod package
+ * (or the launcher's own Widescreen control) turns [Graphics] Widescreen on;
+ * with it off every hook below reduces to the authentic 4:3 path, and 4:3
+ * stays bit-identical.
+ */
+static void DcPrepareFrame(int drawable_w, int drawable_h, int *w, int *h) {
+    SnesDisplayAspect aspect = SnesDisplayAspect_Clamp(g_config.display_aspect);
+    *w = DcDisplay_IsWidescreenEnabled()
+             ? DcDisplay_ComputeFrameWidth(g_dc_aspect, drawable_w,
+                                           drawable_h, aspect)
+             : 256;
+    *h = DC_FRAME_HEIGHT;
+}
+
+static void DcBeginFrame(unsigned number) {
+    (void)number;
+    DcWidescreenConfigureFrame();
+}
+
+static void DcEndFrame(const uint8_t *field, unsigned number) {
+    (void)field;
+    (void)number;
+    DcWidescreenAfterRaster();
+}
+
+static int DcWindowWidth(int frame_width) {
+    return DcDisplay_GetWindowBaseWidth(
+        frame_width, SnesDisplayAspect_Clamp(g_config.display_aspect));
+}
+
 static const SnesDesktopHostGame kGameHost = {
     .display_name        = "Demon's Crest",
     .window_title        = "Demon's Crest",
@@ -53,6 +87,16 @@ static const SnesDesktopHostGame kGameHost = {
     .build_version       = SNES_GAME_VERSION,
     .game_info           = &kGameInfo,
     .num_players         = 1,
+    /* The widescreen mod drives [Graphics] Widescreen before launch; the
+     * launcher toggle offers the same switch. Default off: the frame stays
+     * 256 wide (the mods page decides, not this file). */
+    .widescreen_supported = 1,
+    .native_widescreen   = 1,
+    .prepare_frame       = DcPrepareFrame,
+    .begin_sim_frame     = DcBeginFrame,
+    .end_sim_frame       = DcEndFrame,
+    .window_base_width   = DcWindowWidth,
+    .window_base_height  = DcDisplay_GetWindowBaseHeight,
     /* Demon's Crest (USA) is a ROM-only cartridge (header cart type $00,
      * SRAM size $00): progress is kept with the game's password system, not
      * a battery. Leave the SRAM path NULL so the launcher does not offer a

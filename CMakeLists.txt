@@ -42,6 +42,12 @@ add_executable(DemonsCrestSNESRecomp
     src/host_contract.c
     src/game_rtl.c
     src/gen_stubs.c
+    # Widescreen: presentation geometry + per-frame scene policy, and the
+    # trusted activation plugin for the preloaded mod package. See
+    # docs/WIDESCREEN_PLAN.md and src/dc_widescreen.c.
+    src/dc_display.c
+    src/dc_widescreen.c
+    src/mods/dc_widescreen_plugin.c
 )
 
 # ROM identity. rom_identity.txt is the one place the digests live: the build
