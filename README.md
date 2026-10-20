@@ -1,7 +1,7 @@
 # Demon's Crest Recompiled
 
 Native PC recompilation of **Demon's Crest** (USA), built on
-[snesrecomp](https://github.com/RetroPortingToolKit/snesrecomp). The 65816 game
+[snesrecomp](https://github.com/magnopaz/snesrecomp). The 65816 game
 code is translated to C and runs on the framework's authoritative interpreter,
 while the SNES hardware — PPU, APU/SPC700, DMA/HDMA and cartridge mapping — is
 emulated. Same model as N64Recomp and similar projects: recompile the CPU,

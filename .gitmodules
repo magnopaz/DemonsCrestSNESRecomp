@@ -4,5 +4,5 @@
 	branch = demons-crest/host-hooks
 [submodule "recomp-ui"]
 	path = recomp-ui
-	url = https://github.com/mstan/recomp-ui.git
+	url = https://github.com/magnopaz/recomp-ui.git
 	branch = master
