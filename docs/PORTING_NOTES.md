@@ -249,6 +249,30 @@ The beam driver also needs to be told a machine now exists:
 Without it the driver's `s_resume_pc == 0` boot path ran the reset vector over
 the loaded machine. **Upstream this too**; `git submodule update` reverts it.
 
+## Rewind: modal hotkey and entry-held buttons (2026-10-19)
+
+Rewind opened from F12 (or the Select+R3 gesture) but could not be left: the
+host continues straight out of the successful `snes_rewind_open()` branch, so
+the `continue` skipped the line that consumed `g_rewind_hotkey`. The next
+iteration saw the same request still set and reopened the filmstrip as soon as
+it closed, which reads as the game freezing. Separately, the modal pump started
+with `prev_pad = 0`, so opening rewind while holding A or B (dash/jump) fed
+that held button through as a fresh press and immediately selected or
+cancelled.
+
+`RunRewindLoop()` now consumes `g_rewind_hotkey` on entry and seeds
+`prev_pad` from `OverlayNavInputs()`, so each action needs a release and a new
+press. This matches the fix on the `magnopaz/snesrecomp` fork, branch
+`fix/rewind-modal-input` (`782d4cb`); the project pin now carries the same
+change on `demons-crest/host-hooks`.
+
+Verified with `saves/save0.sav` under gdb (the host deletes a `--resume-state`
+file, so the test used a copy): on the unpatched build, closing the filmstrip
+at frame 300 made `snes_rewind_open()` fire again immediately, and holding B
+on entry closed it after one pump; with the patch it stays open until a fresh
+press, closing at pump 3 resumes the guest and reaches `RUN_FRAMES`, and a
+commit at selection 5 restores without a refusal.
+
 ## Widescreen objects/sprites in the margins (Fase 4, 2026-10-19)
 
 Two guest-side tests kept objects and their sprites inside the authentic
@@ -505,9 +529,10 @@ title does not tolerate as well); prefer promoting the full captured route.
 
 - Generated C (`src/gen/`) is never committed; regenerate with
   `bash tools/regen.sh` (the ROM path is cached in git-ignored `rom.cfg`).
-- The framework submodule pins are recorded in `framework_pins.txt` and are
-  the same revisions the Mega Man X project validates:
-  `snesrecomp eb75c88`, `recomp-ui 7e614a4`.
+- The framework submodule pins are recorded in `framework_pins.txt`. The
+  pins are based on the revisions the Mega Man X project validates
+  (`snesrecomp eb75c88`, `recomp-ui 7e614a4`), plus project-specific commits
+  on the fork branches.
 - `saves/` is intentionally unused: this cartridge has no battery SRAM.
 
 ## References
