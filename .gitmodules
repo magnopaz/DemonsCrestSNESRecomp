@@ -5,4 +5,4 @@
 [submodule "recomp-ui"]
 	path = recomp-ui
 	url = https://github.com/magnopaz/recomp-ui.git
-	branch = master
+	branch = demons-crest/pins
