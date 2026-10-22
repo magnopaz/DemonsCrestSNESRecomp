@@ -1,0 +1,24 @@
+format_version = 1
+id = "demonscrest.skin.undead"
+version = "0.0.1"
+name = "Undead Firebrand Skin (test)"
+author = "Demon's Crest fan project"
+description = "Replaces the native Firebrand player OAM with the deterministic undead reskin. Experimental: static idle frame, presentation-only."
+license = "PolyForm-Noncommercial-1.0.0"
+resolver = "declarative"
+save_compatibility = "presentation-only"
+
+[[target]]
+game_id = "demonscrest-usa"
+rom_sha256 = "18d40a807d5f88c5b6a1ad849eec7e0f189225d9a1586037c850f6680b5844de"
+
+[[feature]]
+id = "undead"
+name = "Undead Firebrand skin"
+description = "Draws the undead Firebrand reskin over the native player sprite. Presentation-only; guest WRAM/VRAM/OAM are restored after each draw."
+group = "Characters"
+default_enabled = true
+
+[[plugin]]
+feature = "undead"
+id = "demonscrest.skin.undead"

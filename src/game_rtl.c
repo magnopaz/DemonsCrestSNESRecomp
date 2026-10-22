@@ -33,6 +33,7 @@
  */
 
 #include "game_rtl.h"
+#include "dc_skin.h"
 
 #include "beam_frame_driver.h"
 #include "common_rtl.h"
@@ -109,7 +110,9 @@ void GameRunOneFrame(void)
 
 void GameDrawPpuFrame(void)
 {
+    DcSkin_BeforeDraw();
     snes_beam_frame_driver_draw_ppu_frame();
+    DcSkin_AfterDraw();
 }
 
 void GameSessionReset(void)

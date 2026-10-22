@@ -47,7 +47,9 @@ add_executable(DemonsCrestSNESRecomp
     # docs/WIDESCREEN_PLAN.md and src/dc_widescreen.c.
     src/dc_display.c
     src/dc_widescreen.c
+    src/dc_skin.c
     src/mods/dc_widescreen_plugin.c
+    src/mods/dc_skin_plugin.c
 )
 
 # ROM identity. rom_identity.txt is the one place the digests live: the build
