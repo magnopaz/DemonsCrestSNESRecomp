@@ -12,8 +12,12 @@ captures/rec_20261024_200734/
 ```
 
 - The path is configurable with `SNESREC_RECORD_DIR`.
-- Frames are the presented image (widescreen margins and OSD included), at the
-  window's internal scale.
+- Frames are the presented image at the game's internal resolution: 256x224, or
+  wider (with the widescreen margins) when the mod is on. OSD toasts are included,
+  so a take shows the same picture the player saw.
+- A 256x224 BMP is ~170 KiB, so a 60-second take is roughly 600 MiB; takes are
+  meant to be fight-length, and `bmp_sequence.py --every 2` halves both the frame
+  count and the size when converting.
 - Toasts report "REC started" / "REC saved N frames".
 - Works in every build: the recorder lives in the host, not the debug server.
 - Rebind it in `config.ini`:
