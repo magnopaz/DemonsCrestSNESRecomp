@@ -2,17 +2,21 @@
 
 ## Hotkey (no client needed)
 
-Press **Alt+R** during play to start a recording and **Alt+R** again to stop it.
-Each take lands in its own folder:
+Press **Alt+R** during play to start a take and **Alt+R** again to stop it. Each
+take lands in its own folder:
 
 ```
-captures/rec_20261024_200010/
-    frames/frame_000310.bmp ...   (one per frame, 256x224)
-    input_log.jsonl                (the pad stream, replayable)
+captures/rec_20261024_200734/
+    frames/frame_000000.bmp ...   one per presented frame, as shown on screen
+    input_log.jsonl               {"frame":N,"inputs":M} per frame, replayable
 ```
 
-The path is configurable with `SNESREC_RECORD_DIR`; the toast reports
-"REC started" / "REC saved N frames". Rebind it in `config.ini`:
+- The path is configurable with `SNESREC_RECORD_DIR`.
+- Frames are the presented image (widescreen margins and OSD included), at the
+  window's internal scale.
+- Toasts report "REC started" / "REC saved N frames".
+- Works in every build: the recorder lives in the host, not the debug server.
+- Rebind it in `config.ini`:
 
 ```ini
 [KeyMap]
@@ -20,7 +24,9 @@ Record = Alt+R      # Ctrl+R is Reset, R alone toggles the renderer
 ```
 
 `keymap_dump` (debug command) prints what every hotkey resolved to, e.g.
-`Record=0x0472`, which is how the binding is verified without a keyboard.
+`Record=0x0472`, which is how the binding can be verified without a keyboard.
+`capture_toggle` starts/stops the same recorder from a script, and
+`record_status` reports `hotkey_recording` / `hotkey_frames`.
 
 ## Debug workflow
 
