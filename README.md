@@ -89,8 +89,8 @@ frame-accuracy checks:
       <br><strong>Castle stage</strong><br>Flight, layered backgrounds and the status bar all correct in the widened field.
     </td>
     <td width="50%" align="center">
-      <img src="docs/screenshots/somulo-firewall.png" width="470" alt="Somulo's firewall attack from the original game">
-      <br><strong>Reference capture</strong><br>A boss attack from the original hardware, used to validate behaviour in the companion port.
+      <img src="docs/screenshots/somulo-firewall.png" width="470" alt="First Battle of the game">
+      <br><strong>Somulo Fight</strong><br>First Battle of the game.
     </td>
   </tr>
 </table>
