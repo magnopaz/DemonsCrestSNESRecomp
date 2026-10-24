@@ -13,6 +13,8 @@ using your own legally dumped ROM.
 [Quick start](#quick-start-build-from-source) |
 [Features](#features) |
 [Widescreen](#widescreen) |
+[Recording](#recording) |
+[Known issues](#known-issues) |
 [Build](#build) |
 [Run](#run)
 
@@ -45,18 +47,90 @@ fights all run from the generated C. The native **Widescreen** mod is
 implemented and validated through its final phase — background margins,
 objects and sprites, HUD anchoring, the Mode 7 overworld, the top-band flicker
 and save-state round-trips — with the engineering notes and validation summary
-in [`docs/PORTING_NOTES.md`](docs/PORTING_NOTES.md).
+in [`docs/PORTING_NOTES.md`](docs/PORTING_NOTES.md). See [Known
+issues](#known-issues) for what playtesting has since turned up, including the
+save-state CPU caveat.
 
 Playtesting continues; general gameplay bugs and broader coverage are the
 remaining work, so treat a full-game playthrough as not yet certified.
+
+### What has been verified by playing it
+
+These were confirmed by actually playing (and scripting) the game, not only by
+frame-accuracy checks:
+
+- **Boot → play**: logo, intro, title, attract and a new game all run.
+- **Stage gameplay and bosses**: the ice cavern, mountains and castle stages run
+  with their bosses, HUD, crest icons and forms intact.
+- **Widescreen**: the widened field really renders stages, margins, HUD
+  anchoring and the Mode 7 overworld as described below.
+- **Forms**: switching gargoyle forms works and each form's sprites play.
+- **Scripted input**: the debug server can drive the game from reset
+  (`set_controller`, `run_to_frame`), which is how the boss and door tests in
+  the companion port are run.
+- **Recording** (new): input can be recorded and replayed frame-exactly, and
+  frames or a rolling buffer can be written to disk — see
+  [`docs/RECORDING.md`](docs/RECORDING.md).
+
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <img src="docs/screenshots/ice-cavern-boss.png" width="470" alt="Ice cavern boss fight in widescreen">
+      <br><strong>Ice cavern boss</strong><br>A boss fight running from the recompiled code, HUD and crest icons included.
+    </td>
+    <td width="50%" align="center">
+      <img src="docs/screenshots/aerial-form-mountains.png" width="470" alt="Aerial gargoyle form in the mountains">
+      <br><strong>Form switching</strong><br>The aerial form in the mountain stage, with the widened background.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <img src="docs/screenshots/castle-flight.png" width="470" alt="Castle stage flight">
+      <br><strong>Castle stage</strong><br>Flight, layered backgrounds and the status bar all correct in the widened field.
+    </td>
+    <td width="50%" align="center">
+      <img src="docs/screenshots/somulo-firewall.png" width="470" alt="Somulo's firewall attack from the original game">
+      <br><strong>Reference capture</strong><br>A boss attack from the original hardware, used to validate behaviour in the companion port.
+    </td>
+  </tr>
+</table>
+
+### Known issues
+
+Found while using the runner as a reference for a native port. None of them stop
+normal play, but they matter to anyone scripting or capturing the game.
+
+1. **Save states do not restore the CPU.** Loading a state brings back
+   WRAM/VRAM/CGRAM/OAM, but the 65816 starts from reset: the screen shows the
+   Capcom copyright while the memory still holds the saved scene. A state made
+   during a boss fight therefore cannot be resumed or screenshotted — the game
+   plays its boot sequence instead. Legacy and current states both behave this
+   way when the ROM's own save is not part of the state.
+2. **`screenshot` / `dump_frame_raw` capture the current frame, and frames only
+   advance through `run_to_frame`.** A paused runner that is asked for a
+   screenshot without advancing returns the same (stale) picture, which looks
+   like a drifting capture. Pair every capture with a frame advance.
+3. **`run_to_frame` returns before the target frame is reached.** Clients that
+   read memory immediately after the command see the old frame; poll `frame`
+   until it reports the target.
+4. **Widescreen edge columns can show art that was never authored for them.**
+   In the mountain stage the far-right margin can show a strip of unrelated
+   tiles (a hazard of widening a 256-pixel game); the castle stage shows black
+   there. Cosmetic only, and only with the widescreen mod enabled.
+5. **Boss sprite composition is only correct in the runner.** The native port
+   built from these captures had to reassemble boss OAM parts itself and got
+   them wrong for a while; that is a port problem, recorded here so the
+   distinction is clear when comparing screenshots.
+
 
 ## Features
 
 | Available | Feature | What it adds |
 |:---------:|---------|--------------|
 | &#9745; | **Adaptive widescreen** | Native widened field with adaptive, 16:9, 21:9 and 32:9 views. Disabled by default; with it off the game renders at the original 256-pixel width. |
-| &#9745; | **Save states** | Ten slots (`F1`–`F10` load, `Shift+F1`–`Shift+F10` save) plus the save-state browser (`F11`). Legacy and current-format saves load in a fresh process. |
+| &#9745; | **Save states** | Ten slots (`F1`–`F10` load, `Shift+F1`–`Shift+F10` save) plus the save-state browser (`F11`). States load in a fresh process, but they do not restore the CPU — see [Known issues](#known-issues). |
 | &#9745; | **Rewind** | Rewind history (`F12`) over the shared framework's snapshot ring. |
+| &#9745; | **Recording** | Record the pad stream and replay it frame-exactly, dump frames, or keep a rolling capture of the last seconds (writes frames plus `input_log.jsonl` on exit). See [`docs/RECORDING.md`](docs/RECORDING.md). |
 | &#9745; | **Launcher** | `recomp-ui` ROM picker with a verification badge, display/audio/input settings and the Mods screen. |
 | &#9745; | **ROM verification** | The ROM is checked against the project digests before anything boots; a mismatched dump is refused instead of mis-executing. |
 | &#9745; | **Authentic 4:3** | The original 256-pixel field and layer layout remain the default when the widescreen mod is off. |
@@ -185,6 +259,28 @@ than mis-executing ten frames in.
 During play: `F11` opens the save-state browser and `F12` opens rewind; both
 pause gameplay while you choose. Hotkeys, controller mappings and pixel/aspect
 options live in the launcher.
+
+## Recording
+
+The debug server can capture a session and reproduce it, which is how the
+screenshots above and the port's reference captures are made:
+
+```sh
+# keep the last ~5 seconds in memory and write them when the window closes
+SNESREC_RING_DIR=captures/somulo ./build/DemonsCrestSNESRecomp "Demon's Crest (USA).sfc"
+
+# or, with SNESRECOMP_DEBUG_PORT set, from a debug client
+record_input_start
+... play the fight ...
+record_input_stop captures/fight.jsonl
+replay_input captures/fight.jsonl      # reproduce it frame-exactly
+record_frames captures/somulo 600 1     # one BMP per frame
+python tools/bmp_sequence.py captures/somulo --gif somulo.gif
+```
+
+Input is sampled where the runner reads the pad, so file frame N is the input
+frame N ran with. See [`docs/RECORDING.md`](docs/RECORDING.md) for every command
+and its limits.
 
 ## ROM identity
 
