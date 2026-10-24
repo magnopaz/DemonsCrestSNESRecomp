@@ -1,5 +1,29 @@
 # Recording boss fights and animations
 
+## Hotkey (no client needed)
+
+Press **Alt+R** during play to start a recording and **Alt+R** again to stop it.
+Each take lands in its own folder:
+
+```
+captures/rec_20261024_200010/
+    frames/frame_000310.bmp ...   (one per frame, 256x224)
+    input_log.jsonl                (the pad stream, replayable)
+```
+
+The path is configurable with `SNESREC_RECORD_DIR`; the toast reports
+"REC started" / "REC saved N frames". Rebind it in `config.ini`:
+
+```ini
+[KeyMap]
+Record = Alt+R      # Ctrl+R is Reset, R alone toggles the renderer
+```
+
+`keymap_dump` (debug command) prints what every hotkey resolved to, e.g.
+`Record=0x0472`, which is how the binding is verified without a keyboard.
+
+## Debug workflow
+
 The runner's debug server can capture a play session and reproduce it exactly, so
 a fight or an animation only has to happen once. Everything works over the same
 TCP debug protocol used by the other tools (`SNESRECOMP_DEBUG_PORT`).

@@ -130,7 +130,7 @@ normal play, but they matter to anyone scripting or capturing the game.
 | &#9745; | **Adaptive widescreen** | Native widened field with adaptive, 16:9, 21:9 and 32:9 views. Disabled by default; with it off the game renders at the original 256-pixel width. |
 | &#9745; | **Save states** | Ten slots (`F1`–`F10` load, `Shift+F1`–`Shift+F10` save) plus the save-state browser (`F11`). States load in a fresh process, but they do not restore the CPU — see [Known issues](#known-issues). |
 | &#9745; | **Rewind** | Rewind history (`F12`) over the shared framework's snapshot ring. |
-| &#9745; | **Recording** | Record the pad stream and replay it frame-exactly, dump frames, or keep a rolling capture of the last seconds (writes frames plus `input_log.jsonl` on exit). See [`docs/RECORDING.md`](docs/RECORDING.md). |
+| &#9745; | **Recording** | **Alt+R** starts/stops a take (frames plus a replayable `input_log.jsonl`), and the debug protocol can also record the pad stream, replay it frame-exactly, or keep a rolling capture of the last seconds. See [`docs/RECORDING.md`](docs/RECORDING.md). |
 | &#9745; | **Launcher** | `recomp-ui` ROM picker with a verification badge, display/audio/input settings and the Mods screen. |
 | &#9745; | **ROM verification** | The ROM is checked against the project digests before anything boots; a mismatched dump is refused instead of mis-executing. |
 | &#9745; | **Authentic 4:3** | The original 256-pixel field and layer layout remain the default when the widescreen mod is off. |
@@ -257,8 +257,10 @@ a dump that could not have produced this build is refused at the door rather
 than mis-executing ten frames in.
 
 During play: `F11` opens the save-state browser and `F12` opens rewind; both
-pause gameplay while you choose. Hotkeys, controller mappings and pixel/aspect
-options live in the launcher.
+pause gameplay while you choose. **Alt+R starts/stops a recording** (frames plus
+a replayable input log, saved under `captures/`). Hotkeys, controller mappings
+and pixel/aspect options live in the launcher; `Alt+R` can be moved with
+`Record = <key>` in `config.ini`'s `[KeyMap]`.
 
 ## Recording
 
