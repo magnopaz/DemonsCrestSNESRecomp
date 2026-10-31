@@ -38,6 +38,11 @@ void DcDisplay_SetWidescreenEnabled(bool enabled);
 bool DcDisplay_IsWidescreenEnabled(void);
 bool DcDisplay_IsWidescreenActive(void);
 
+/* Widened field width the PPU is currently rendering into: 256 at 4:3, else
+ * 256 + 2*g_ws_extra. The host's g_snes_width, published through the same
+ * source so end-of-frame callers do not need the host's globals. */
+int DcDisplay_FrameWidth(void);
+
 /* Logical field width for the selected aspect: even, at least 256, clamped
  * to the host's native-widescreen surface (kPpuBufWidth). The
  * SNESRECOMP_WS_EXTRA probe override pins the margin instead. */

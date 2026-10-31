@@ -113,10 +113,17 @@ normal play, but they matter to anyone scripting or capturing the game.
 3. **`run_to_frame` returns before the target frame is reached.** Clients that
    read memory immediately after the command see the old frame; poll `frame`
    until it reports the target.
-4. **Widescreen edge columns can show art that was never authored for them.**
-   In the mountain stage the far-right margin can show a strip of unrelated
-   tiles (a hazard of widening a 256-pixel game); the castle stage shows black
-   there. Cosmetic only, and only with the widescreen mod enabled.
+4. **Widescreen edge columns are repaired, not reconstructed.** Demon's Crest
+   stages its BG tilemaps just in time for the native 256-pixel view (the
+   newest staged column is only ~288–303 px ahead of the camera), so with a
+   wider field the outermost columns of the right margin have no tilemap data
+   yet: they held a cleared column or a previous room's tiles, which is the
+   strip that used to show up while walking. The port now continues the last
+   staged tile over that band after the raster (see
+   [`docs/PORTING_NOTES.md`](docs/PORTING_NOTES.md#widescreen-the-engines-staging-window-and-the-far-right-band-2026-10-31)),
+   so the background stays continuous; the real tilemap for those columns does
+   not exist yet, so it is not pixel-authentic. `SNESRECOMP_WS_EDGE=0` disables
+   the repair for A/B captures.
 5. **Boss sprite composition is only correct in the runner.** The native port
    built from these captures had to reassemble boss OAM parts itself and got
    them wrong for a while; that is a port problem, recorded here so the

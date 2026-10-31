@@ -38,6 +38,25 @@ void DcWidescreenConfigureFrame(void);
 void DcWidescreenAfterRaster(void);
 
 /*
+ * Far-right background repair (docs/WIDESCREEN.md, "Janela de staging").
+ *
+ * The engine stages the BG tilemap ring just in time for the native 256-px
+ * view: the newest staged column is only ~288..303 px ahead of the camera, so
+ * with a wider field the last margin columns (up to one 16-px room cell) still
+ * hold a cleared column or a previous room's tiles -- the strip reported while
+ * walking. This pass runs on the composed field (end_sim_frame, after the
+ * raster) and continues the last staged tile over that band, leaving every
+ * staged column untouched. It is a repair, not a reconstruction: the content
+ * does not exist yet. No-op at margin 0, outside gameplay, or with
+ * SNESRECOMP_WS_EDGE=0; SNESRECOMP_WS_STAGE_LEAD=<px> overrides the measured
+ * lead for a room that streams with a different window.
+ *
+ * `field` is width*height BGRA pixels with rows `pitch` bytes apart.
+ */
+void DcWidescreenRepairField(uint8_t *field, unsigned pitch, int width,
+                             int height);
+
+/*
  * Fase 4 — objects and sprites in the margins.
  *
  * DcWsObjectCullMargin() is called by the injected generated-code hooks (the

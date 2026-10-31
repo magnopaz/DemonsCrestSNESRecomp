@@ -488,6 +488,42 @@ a run produces the same WRAM as a cold load; the new-format save round-trip
 and the intro fades render correctly. HUD states beyond full health/magic and
 a left-margin trailing-object capture remain as documented limitations.
 
+## Widescreen: the engine's staging window and the far-right band (2026-10-31)
+
+The owner reported that walking left the far-right margin showing the wrong
+background. It is not a renderer bug: the engine stages the BG tilemaps just in
+time for the authentic 256-pixel view, one 16x16 room cell at a time, and the
+wider field asks for columns it has not written yet.
+
+Measured from a state dump plus the widened framebuffer (owner save,
+`SNESRECOMP_WS_EXTRA=48`, `SNESRECOMP_LAYER_MASK=1`, one room walked end to
+end): the engine writes two tilemap columns per update and its newest staged
+column is always `16 * floor((camera + 304) / 16)` — 288..303 px ahead of the
+camera, not 256. The BG tilemap ring is 64x32 (512 px), so the left margin (up
+to ~209 px of ring behind the camera) is always authentic, while the right
+margin runs past the frontier by up to one cell. The number of wrong margin
+columns per frame was exactly `margin - (frontier - camera - 256)` in all 60
+sampled frames, and the staged margin columns matched the same world region
+when it later became native content, pixel for pixel. Full table and method:
+`docs/WIDESCREEN.md` §"Janela de staging" (local design doc, not committed).
+
+`DcWidescreenRepairField()` (`src/dc_widescreen.c`, called from
+`end_sim_frame`) repairs the band on the composed field: it repeats the last
+staged 8-px tile (same phase) over `[frontier + margin, 256 + 2*margin)` and
+leaves every staged column untouched. Verified over 60 walked frames against
+the same build with the repair off: only the predicted band columns change and
+everything else is byte-identical; at 4:3 the pass is a no-op; two runs of the
+same route are byte-identical. A sprite inside the <=16 px band is covered by
+the background continuation.
+
+This is a repair, not a reconstruction — the engine has not produced that
+content yet. The permanent fixes are (a) biasing the room-cell staging cursor
+by the live margin on the engine side (the cursor is camera-driven; locating
+the comparison needs a debug-server watchpoint on the DMA descriptor push), or
+(b) expanding the room metatiles host-side with `WsShadowPrefillTile`.
+`SNESRECOMP_WS_EDGE=0` disables the repair; `SNESRECOMP_WS_STAGE_LEAD=<px>`
+overrides the measured lead for a room that streams with a different window.
+
 ## Rich configuration (validated 2026-10-10)
 
 | Metric | Baseline scaffold | Rich config |

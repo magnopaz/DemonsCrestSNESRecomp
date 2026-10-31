@@ -25,10 +25,22 @@ path stays bit-identical.
    and >= that as the wrapped left margin (PpuDecodeOamX).
 
 The generated code is re-derived by tools/regen.sh; this script is idempotent
-(injected lines carry a /*DCWS4*/ marker) and fails loudly when an anchor is
-missing, so a generator change cannot silently drop a hook.
+(injected lines carry a /*DCWS4*/ or /*DCWS5*/ marker).
 
-Usage: tools/dc_apply_widescreen_hooks.py [--gen-dir src/gen]
+Drift safety: the injector is the only thing standing between a generator
+change and a silently narrower game, so it counts what it patched and fails
+loudly (a) when an anchor is missing, (b) when fewer sites are patched than
+this project expects, and (c) in --check mode, when any anchor is still
+unpatched. A generator change that legitimately adds or removes a variant must
+update EXPECTED_MIN below -- deliberately, in the same commit.
+
+Usage:
+    tools/dc_apply_widescreen_hooks.py [--gen-dir src/gen] [--check]
+                                       [--expect key=count ...] [--no-strict]
+    tools/dc_apply_widescreen_hooks.py --check      # verify, never write
+
+Exit codes: 0 ok / nothing to do, 1 drift or unexpected anchor shape,
+2 usage error.
 """
 
 import argparse
@@ -37,6 +49,7 @@ import re
 import sys
 
 MARK = "/*DCWS4*/"
+MARK5 = "/*DCWS5*/"
 PROTO = ("%s extern int DcWsObjectCullMargin(void); "
          "/* widescreen object cull margin (src/dc_widescreen.c) */" % MARK)
 
@@ -48,6 +61,41 @@ EMIT_LIMIT = re.compile(r"^(\s*)uint16 (_v\d+) = 0xf3;$")
 # high byte (keep only [0,255]) and branch on Z. Two sites, X then Y.
 SCREEN_MASK = re.compile(r"^(\s*)uint16 (_v\d+) = 0xff00;$")
 
+# Patched forms, counted after injection (and by --check against an existing
+# tree). Keep these in step with the injected text below.
+PATCHED_CULL_X = re.compile(
+    r"^\s*uint16 _v\d+ = \(uint16\)\(0x1c0 \+ 2 \* DcWsObjectCullMargin\(\)\);",
+    re.MULTILINE)
+PATCHED_CULL_Y = re.compile(
+    r"^\s*uint16 _v\d+ = \(uint16\)\(0x1a0 \+ 2 \* DcWsObjectCullMargin\(\)\);",
+    re.MULTILINE)
+PATCHED_SLACK = re.compile(
+    r"^\s*uint16 _v\d+ = \(uint16\)\(0x60 \+ DcWsObjectCullMargin\(\)\);",
+    re.MULTILINE)
+PATCHED_EMITTER = re.compile(
+    r"^\s*uint16 _v\d+ = \(uint16\)\(0x00F3 - DcWsObjectCullMargin\(\)\);",
+    re.MULTILINE)
+PATCHED_SCREEN = re.compile(
+    r"^\s*const uint16 _ws_m = \(uint16\)DcWsObjectCullMargin\(\);",
+    re.MULTILINE)
+PATCHED_PROTO = re.compile(re.escape(PROTO))
+
+# The generator emits this many hook sites today (measured on the current
+# build: 5 object-cull X + 5 Y, 1 emitter, 6 on-screen test sites, and the
+# prototype in four bank files). These are MINIMA: more is fine (coverage can
+# grow), fewer means an anchor vanished and the port silently lost a hook.
+EXPECTED_MIN = {
+    "cull_x": 5,
+    "cull_y": 5,
+    "emitter": 1,
+    "screen": 6,
+    "prototype_files": 3,
+}
+
+
+class Drift(Exception):
+    """An anchor disappeared or changed shape: refuse to touch the tree."""
+
 
 def inject_prototype(lines):
     if any(PROTO in line for line in lines):
@@ -56,7 +104,7 @@ def inject_prototype(lines):
         if line.startswith('#include "funcs.h"'):
             lines.insert(i + 1, PROTO)
             return
-    sys.exit('no #include "funcs.h" anchor for the injected prototype')
+    raise Drift('no #include "funcs.h" anchor for the injected prototype')
 
 
 def patch_cull(path, lines):
@@ -79,7 +127,7 @@ def patch_cull(path, lines):
                 slack = j
                 break
         if slack is None:
-            sys.exit("%s: no slack constant before line %d" % (path, i + 1))
+            raise Drift("%s: no slack constant before line %d" % (path, i + 1))
         tests.append((kind, i, slack))
 
     if not tests:
@@ -97,7 +145,8 @@ def patch_cull(path, lines):
             if MARK in lines[idx]:
                 continue
             if old not in lines[idx]:
-                sys.exit("%s: unexpected line %d: %s" % (path, idx + 1, lines[idx]))
+                raise Drift("%s: unexpected line %d: %s" %
+                            (path, idx + 1, lines[idx]))
             lines[idx] = lines[idx].replace(old, new) + " " + MARK
             changed += 1
     return changed
@@ -127,23 +176,26 @@ def patch_emitter(path, lines):
             end = j
             break
     if end is None:
-        sys.exit("%s: emitter block end not found at line %d" % (path, start + 1))
+        raise Drift("%s: emitter block end not found at line %d" %
+                    (path, start + 1))
 
     indent = re.match(r"^(\s*)", lines[start]).group(1)
     hide_label = re.search(r"goto (L_F788_\w+)", "\n".join(lines[start:end + 1]))
     keep_label = re.search(r"goto (L_F762_\w+)", lines[end])
     if not hide_label or not keep_label:
-        sys.exit("%s: emitter labels not found at line %d" % (path, start + 1))
+        raise Drift("%s: emitter labels not found at line %d" %
+                    (path, start + 1))
     hide, keep = hide_label.group(1), keep_label.group(1)
+    var = EMIT_LIMIT.match(lines[start]).group(2)
 
     injected = [
         "%s%s /* Widescreen: keep the widened right margin (low < margin) and the" % (indent, MARK),
         "%s     * widened left-edge window (low >= 0xF3 - margin); 0 = authentic. */" % indent,
         "%suint16 %s = (uint16)(0x00F3 - DcWsObjectCullMargin()); %s" %
-        (indent, EMIT_LIMIT.match(lines[start]).group(2), MARK),
+        (indent, var, MARK),
         "%suint16 _ws_low = (uint16)(cpu->A & 0x00FF); %s" % (indent, MARK),
         "%sif (_ws_low >= DcWsObjectCullMargin() && _ws_low < %s) { %s" %
-        (indent, EMIT_LIMIT.match(lines[start]).group(2), MARK),
+        (indent, var, MARK),
         "%s  cpu->cycles += 1; cpu->master_cycles += ((g_memsel && (cpu->PB & 0x80)) ? 6 : 8); %s"
         % (indent, MARK),
         "%s  goto %s; %s" % (indent, hide, MARK),
@@ -161,29 +213,33 @@ def patch_screen_test(path, lines):
     (i.e. in [0,255]); the injected version keeps [-margin, 255+margin). The
     branch that follows reads Z, so Z must mean "on screen" at both sites.
     """
-    MARK5 = "/*DCWS5*/"
     sites = []
     for i, line in enumerate(lines):
         if not SCREEN_MASK.match(line):
             continue
         after = "\n".join(lines[i:i + 8])
-        if "L_E6C4_" in after or "L_E6C8_" in after:
-            sites.append(i)
+        if "L_E6C4_" not in after and "L_E6C8_" not in after:
+            continue
+        # The injected block sits right after the masked value; its `_ws_m`
+        # local is how an already-patched site is recognised (the mask line
+        # itself is authentic and stays untouched).
+        if "_ws_m" in "\n".join(lines[i:i + 16]):
+            continue
+        sites.append(i)
     if not sites:
         return 0
 
     changed = 0
     for i in sorted(sites, reverse=True):
-        if MARK5 in lines[i]:
-            continue
         m = SCREEN_MASK.match(lines[i])
         mask_var = m.group(2)
         read_i = i + 1
         if "cpu_read_a16(cpu)" not in lines[read_i]:
-            sys.exit("%s: unexpected line %d: %s" % (path, read_i + 1, lines[read_i]))
+            raise Drift("%s: unexpected line %d: %s" %
+                        (path, read_i + 1, lines[read_i]))
         raw_var = re.search(r"uint16 (_v\d+) = cpu_read_a16", lines[read_i])
         if not raw_var:
-            sys.exit("%s: raw read not found at line %d" % (path, read_i + 1))
+            raise Drift("%s: raw read not found at line %d" % (path, read_i + 1))
         raw_var = raw_var.group(1)
         value_var = None
         value_i = None
@@ -194,14 +250,16 @@ def patch_screen_test(path, lines):
                 value_i = j
                 break
         if value_var is None:
-            sys.exit("%s: mask value not found after line %d" % (path, i + 1))
+            raise Drift("%s: mask value not found after line %d" %
+                        (path, i + 1))
         a_write = None
         for j in range(value_i + 1, min(value_i + 6, len(lines))):
             if "cpu_write_a_m" in lines[j]:
                 a_write = j
                 break
         if a_write is None:
-            sys.exit("%s: A write not found after line %d" % (path, value_i + 1))
+            raise Drift("%s: A write not found after line %d" %
+                        (path, value_i + 1))
         indent = re.match(r"^(\s*)", lines[value_i]).group(1)
         injected = [
             "%s%s /* Widescreen: authentic keeps a screen coordinate only while its" % (indent, MARK5),
@@ -219,44 +277,148 @@ def patch_screen_test(path, lines):
     return changed
 
 
+def count_patched(text):
+    """Hook sites present in `text` as already-injected code."""
+    return {
+        "cull_x": len(PATCHED_CULL_X.findall(text)),
+        "cull_y": len(PATCHED_CULL_Y.findall(text)),
+        "slack": len(PATCHED_SLACK.findall(text)),
+        "emitter": len(PATCHED_EMITTER.findall(text)),
+        "screen": len(PATCHED_SCREEN.findall(text)),
+        "prototype_files": 1 if PATCHED_PROTO.search(text) else 0,
+    }
+
+
+def merge_counts(total, add):
+    for k, v in add.items():
+        total[k] = total.get(k, 0) + v
+
+
+def check_counts(counts, expected):
+    """Return a list of human-readable shortfalls (empty when the tree is ok)."""
+    short = []
+    for key, want in sorted(expected.items()):
+        got = counts.get(key, 0)
+        if got < want:
+            short.append("%s: %d patched, expected at least %d" % (key, got, want))
+    return short
+
+
+def write_atomic(path, text):
+    """Write via a sibling temp file so a crash cannot leave a half-patched TU."""
+    tmp = path.with_name(path.name + ".dchooks.tmp")
+    with open(tmp, "w", encoding="utf-8", newline="\n") as f:
+        f.write(text)
+    tmp.replace(path)
+
+
+def parse_expectations(pairs):
+    expected = dict(EXPECTED_MIN)
+    for pair in pairs:
+        if "=" not in pair:
+            raise SystemExit("--expect wants key=count, got %r" % pair)
+        key, _, value = pair.partition("=")
+        key = key.strip()
+        if key not in EXPECTED_MIN:
+            raise SystemExit("--expect: unknown key %r (known: %s)" %
+                             (key, ", ".join(sorted(EXPECTED_MIN))))
+        try:
+            expected[key] = int(value)
+        except ValueError:
+            raise SystemExit("--expect %s: not an integer: %r" % (key, value))
+    return expected
+
+
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__)
+    ap = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--gen-dir", default="src/gen",
                     help="generated-code directory (default: src/gen)")
+    ap.add_argument("--check", action="store_true",
+                    help="verify only: fail if any anchor is unpatched or a "
+                         "hook site is missing; never write")
+    ap.add_argument("--expect", action="append", default=[], metavar="KEY=COUNT",
+                    help="override an expected minimum (repeatable; known keys: "
+                         + ", ".join(sorted(EXPECTED_MIN)) + ")")
+    ap.add_argument("--no-strict", action="store_true",
+                    help="report the counts but do not fail on a shortfall "
+                         "(for investigating a generator change)")
     args = ap.parse_args()
 
+    expected = parse_expectations(args.expect)
     gen = pathlib.Path(args.gen_dir)
     if not gen.is_dir():
-        sys.exit("gen dir not found: %s" % gen)
+        print("dc_apply_widescreen_hooks: gen dir not found: %s" % gen,
+              file=sys.stderr)
+        return 2
     files = sorted(gen.glob("bank*.c"))
     if not files:
-        sys.exit("no generated bank files in %s" % gen)
+        print("dc_apply_widescreen_hooks: no generated bank files in %s" % gen,
+              file=sys.stderr)
+        return 2
 
-    total_cull = 0
-    total_emit = 0
-    total_screen = 0
-    for path in files:
-        lines = path.read_text(encoding="utf-8").splitlines()
-        cull = patch_cull(path, lines)
-        emit = patch_emitter(path, lines)
-        screen = patch_screen_test(path, lines)
-        if not (cull or emit or screen):
-            continue
-        inject_prototype(lines)
-        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        print("dc_apply_widescreen_hooks: %s: cull %d, emitter %d, screen %d" %
-              (path.name, cull, emit, screen))
-        total_cull += cull
-        total_emit += emit
-        total_screen += screen
+    total_changed = 0
+    counts = {}
+    changed_files = []
+    try:
+        for path in files:
+            original = path.read_text(encoding="utf-8")
+            lines = original.splitlines()
+            cull = patch_cull(path, lines)
+            emit = patch_emitter(path, lines)
+            screen = patch_screen_test(path, lines)
+            changed = cull + emit + screen
+            if changed:
+                inject_prototype(lines)
+            text = "\n".join(lines) + "\n" if changed else original
 
-    if total_cull == 0 and total_emit == 0 and total_screen == 0:
-        # Either everything is already patched or the anchors vanished.
-        patched = any(MARK in p.read_text(encoding="utf-8") for p in files)
-        if not patched:
-            sys.exit("no widescreen anchors found in %s" % gen)
-    print("dc_apply_widescreen_hooks: done (cull %d, emitter %d, screen %d)" %
-          (total_cull, total_emit, total_screen))
+            if changed and not args.check:
+                write_atomic(path, text)
+
+            counts_file = count_patched(text)
+            merge_counts(counts, counts_file)
+            if changed:
+                changed_files.append("%s: cull %d, emitter %d, screen %d" %
+                                     (path.name, cull, emit, screen))
+                total_changed += changed
+    except Drift as exc:
+        print("dc_apply_widescreen_hooks: DRIFT: %s" % exc, file=sys.stderr)
+        return 1
+
+    for line in changed_files:
+        print("dc_apply_widescreen_hooks: %s" % line)
+
+    if args.check and total_changed:
+        # In check mode the patcher ran on an in-memory copy: anything it had
+        # to change means the tree on disk is not fully injected.
+        print("dc_apply_widescreen_hooks: --check FAILED: %d hook line(s) "
+              "still unpatched; run the injector" % total_changed,
+              file=sys.stderr)
+        return 1
+
+    short = check_counts(counts, expected)
+    if short and not args.no_strict:
+        print("dc_apply_widescreen_hooks: FAILED: hook sites are missing "
+              "(anchors changed shape?):", file=sys.stderr)
+        for line in short:
+            print("  - %s" % line, file=sys.stderr)
+        print("  measured: %s" % ", ".join("%s=%d" % (k, counts.get(k, 0))
+                                           for k in sorted(expected)),
+              file=sys.stderr)
+        print("  If the generator deliberately changed the hook set, update "
+              "EXPECTED_MIN in this script in the same commit.", file=sys.stderr)
+        return 1
+    if short:
+        print("dc_apply_widescreen_hooks: WARNING (--no-strict): %s" %
+              "; ".join(short), file=sys.stderr)
+
+    print("dc_apply_widescreen_hooks: %s (cull_x %d, cull_y %d, slack %d, "
+          "emitter %d, screen %d, prototype files %d)" %
+          ("check ok" if args.check else "done",
+           counts.get("cull_x", 0), counts.get("cull_y", 0),
+           counts.get("slack", 0), counts.get("emitter", 0),
+           counts.get("screen", 0), counts.get("prototype_files", 0)))
     return 0
 
 

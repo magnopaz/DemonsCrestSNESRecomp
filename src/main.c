@@ -66,9 +66,15 @@ static void DcBeginFrame(unsigned number) {
 }
 
 static void DcEndFrame(const uint8_t *field, unsigned number) {
-    (void)field;
     (void)number;
     DcWidescreenAfterRaster();
+    /* Repair the far-right margin band the engine has not staged yet. Runs on
+     * the composed field, before it is presented or dumped. */
+    {
+        int width = DcDisplay_FrameWidth();
+        DcWidescreenRepairField((uint8_t *)field, (unsigned)width * 4u, width,
+                                DC_FRAME_HEIGHT);
+    }
 }
 
 static int DcWindowWidth(int frame_width) {

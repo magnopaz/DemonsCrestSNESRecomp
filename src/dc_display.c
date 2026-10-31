@@ -50,6 +50,12 @@ bool DcDisplay_IsWidescreenEnabled(void) { return g_config.widescreen; }
 
 bool DcDisplay_IsWidescreenActive(void) { return g_ws_active; }
 
+int DcDisplay_FrameWidth(void) {
+    if (!g_config.widescreen || !g_ws_active || g_ws_extra <= 0)
+        return 256;
+    return 256 + 2 * g_ws_extra;
+}
+
 int DcDisplay_ComputeFrameWidth(DcRenderAspect aspect, int drawable_width,
                                 int drawable_height,
                                 SnesDisplayAspect display_aspect) {
