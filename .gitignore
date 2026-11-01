@@ -41,7 +41,10 @@
 
 .DS_Store
 .vscode
-.github
 docs/WIDESCREEN_PLAN.md
 docs/WIDESCREEN.md
 captures/
+
+# Python bytecode from the headless test harness
+__pycache__/
+*.pyc

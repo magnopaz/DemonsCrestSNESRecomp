@@ -100,12 +100,14 @@ frame-accuracy checks:
 Found while using the runner as a reference for a native port. None of them stop
 normal play, but they matter to anyone scripting or capturing the game.
 
-1. **Save states do not restore the CPU.** Loading a state brings back
-   WRAM/VRAM/CGRAM/OAM, but the 65816 starts from reset: the screen shows the
-   Capcom copyright while the memory still holds the saved scene. A state made
-   during a boss fight therefore cannot be resumed or screenshotted — the game
-   plays its boot sequence instead. Legacy and current states both behave this
-   way when the ROM's own save is not part of the state.
+1. **Save states made by older builds lack the execution chunk.** The current
+   build saves and restores the 65816 execution state too (the v5 chunk in
+   `src/game_rtl.c`), so a state loads in a fresh process and plays — verified
+   with in-stage states. A state written by a build from before that chunk (the
+   framework also ships `snes_saveload`, which serialises the legacy `Cpu`, not
+   the runtime's `CpuState`) has no execution state to restore: it falls back to
+   the guest's boot-time scheduler context, so a resumed boss fight from such a
+   legacy state restarts the scene.
 2. **`screenshot` / `dump_frame_raw` capture the current frame, and frames only
    advance through `run_to_frame`.** A paused runner that is asked for a
    screenshot without advancing returns the same (stale) picture, which looks
@@ -135,7 +137,7 @@ normal play, but they matter to anyone scripting or capturing the game.
 | Available | Feature | What it adds |
 |:---------:|---------|--------------|
 | &#9745; | **Adaptive widescreen** | Native widened field with adaptive, 16:9, 21:9 and 32:9 views. Disabled by default; with it off the game renders at the original 256-pixel width. |
-| &#9745; | **Save states** | Ten slots (`F1`–`F10` load, `Shift+F1`–`Shift+F10` save) plus the save-state browser (`F11`). States load in a fresh process, but they do not restore the CPU — see [Known issues](#known-issues). |
+| &#9745; | **Save states** | Ten slots (`F1`–`F10` load, `Shift+F1`–`Shift+F10` save) plus the save-state browser (`F11`). The current build restores the 65816 execution state (v5 chunk), so states load in a fresh process and play; states written by builds that predate the chunk resume at the boot-time scheduler context — see [Known issues](#known-issues). |
 | &#9745; | **Rewind** | Rewind history (`F12`) over the shared framework's snapshot ring. |
 | &#9745; | **Recording** | **Alt+R** starts/stops a take: one BMP per presented frame plus a replayable `input_log.jsonl`, in `captures/rec_<time>/`. Needs no debug server; the protocol can additionally replay the pad stream frame-exactly or keep a rolling capture. See [`docs/RECORDING.md`](docs/RECORDING.md). |
 | &#9745; | **Launcher** | `recomp-ui` ROM picker with a verification badge, display/audio/input settings and the Mods screen. |
@@ -181,6 +183,14 @@ The generated-code hooks are applied by
 idempotent injector run by `tools/regen.sh` and by the build. At margin 0 every
 injected expression evaluates to the authentic constant, so the object and
 sprite hooks add nothing to the 4:3 path.
+
+The engine stages its BG tilemaps for the 256-pixel view and only keeps
+~288–303 px of world ahead of the camera, so the picture beyond that is not in
+VRAM yet. The port continues the last staged tile over that band, which is
+invisible at 16:9 and becomes a visibly repeated strip at the extreme edges of
+21:9/32:9 — those two views are honest extra *screen*, not extra *game*: the
+far margins show the levels' edge material repeated rather than new rooms. See
+[`docs/PORTING_NOTES.md`](docs/PORTING_NOTES.md#widescreen-the-engines-staging-window-and-the-far-right-band-2026-10-31).
 
 Diagnostic kill-switches for A/B captures:
 `SNESRECOMP_WS_OAM=0` (object/sprite widening),
@@ -244,6 +254,38 @@ recorded in `rom.cfg`; `.gitignore` blocks both from ever being committed.
 `tools/regen.sh` verifies the ROM, generates `src/gen/*.c`, and re-syncs
 `recomp/funcs.h`. Re-run it whenever you change anything under `recomp/`.
 
+The desktop build defaults to the framework's **execution policy `off`** — the
+faithful LLE floor is what runs, by design, until an optimized path clears the
+framework's promotion gates (`snesrecomp/docs/PERFORMANCE.md`,
+`recomp-ai-rules/OPTIMIZATION.md`). A release that has promoted paths sets
+`-DSNESRECOMP_EXECUTION_DEFAULT=on`; `SNESRECOMP_EXECUTION_MODE` and
+`SNESRECOMP_FORCE_FLOOR=1` override it at runtime.
+
+On Windows the MinGW link prints
+`.rsrc merge failure: multiple non-default manifests`: binutils merges the
+UTF-8 manifest `snesrecomp/runner/windows/snesrecomp_utf8.manifest` with the
+linker's default one. The explicit manifest is embedded (the built executable
+contains `activeCodePage=UTF-8`) and the host reports its code page at startup,
+so this is link noise, not a missing manifest.
+
+## Tests
+
+The port's invariants run headlessly against the built executable:
+
+```sh
+cmake --build build -j
+cd build && ctest --output-on-failure
+```
+
+`ctest -L unit` needs no ROM (the generated-code injector: synthetic anchors,
+idempotency, drift rejection, plus `--check` against `src/gen`).
+`ctest -L integration` boots the game, checks that a widened field keeps its
+authentic center bit-identical to 4:3, that two runs are deterministic, and —
+with a save state — that the far-right staging repair touches only the columns
+the engine has not staged. Integration tests report SKIP when no ROM is
+available and the repair test also wants `SNESRECOMP_TEST_SAVE`. See
+[`docs/TESTING.md`](docs/TESTING.md).
+
 ## Run
 
 ```sh
@@ -290,6 +332,13 @@ python tools/bmp_sequence.py captures/somulo --gif somulo.gif
 Input is sampled where the runner reads the pad, so file frame N is the input
 frame N ran with. See [`docs/RECORDING.md`](docs/RECORDING.md) for every command
 and its limits.
+
+Environment switches: `SNESREC_AUTORECORD=1` starts a take on the first guest
+frame (so it is replayable from boot), `SNESREC_RECORD_DIR` picks the take
+directory, `SNESREC_RING_DIR` / `SNESREC_RING=1` arm the rolling buffer, and
+`SNESREC_INPUT_ONLY=1` records the input log without per-frame BMPs — the last
+one is a small local patch to the framework host (see
+[`docs/RECORDING.md`](docs/RECORDING.md#environment-switches)).
 
 ## ROM identity
 

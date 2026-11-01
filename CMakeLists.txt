@@ -47,6 +47,9 @@ add_executable(DemonsCrestSNESRecomp
     # docs/WIDESCREEN_PLAN.md and src/dc_widescreen.c.
     src/dc_display.c
     src/dc_widescreen.c
+    # Staged-window edge repair: the measured BG staging model + the
+    # post-raster far-right band repair (dc_widescreen.c holds the policy).
+    src/dc_ws_edge.c
     src/mods/dc_widescreen_plugin.c
 )
 
@@ -116,6 +119,23 @@ target_compile_definitions(DemonsCrestSNESRecomp PRIVATE
     SNES_GAME_VERSION="${SNESRECOMP_BUILD_VERSION}"
     SNES_GAME_TITLE="Demon's Crest"
 )
+# The project's own sources get the project's warning set. The framework and
+# the generated code are compiled with the framework's flags: they are not ours
+# to clean, and -Wall there would bury real warnings in third-party noise.
+# (A real bug -- an inverted band condition in the widescreen repair -- was
+# caught by tests only because this set was missing; keep it on.)
+if(CMAKE_C_COMPILER_ID STREQUAL "GNU" OR CMAKE_C_COMPILER_ID MATCHES "Clang")
+    set_source_files_properties(
+        src/main.c
+        src/host_contract.c
+        src/game_rtl.c
+        src/gen_stubs.c
+        src/dc_display.c
+        src/dc_widescreen.c
+        src/dc_ws_edge.c
+        src/mods/dc_widescreen_plugin.c
+        PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra;-Wno-unused-parameter")
+endif()
 snesrecomp_target_sdl(DemonsCrestSNESRecomp)
 
 # The desktop host: launcher flow, ROM resolution, config.ini + [KeyMap],
@@ -163,3 +183,14 @@ target_include_directories(DemonsCrestSNESRecomp PRIVATE
 
 # Netplay is not built into this target.
 # No multitap: two seats, one controller per port.
+
+# Headless regression tests: `ctest --test-dir build`. The unit tests need no
+# ROM (injector anchors, idempotency, drift rejection); the integration tests
+# drive the real executable and report SKIP when no ROM is found. See
+# docs/TESTING.md. A setup host (`-DSNESRECOMP_SETUP_HOST=ON`, no recompiled
+# code) registers the unit tests only, which is also how CI runs them.
+include(CTest)
+if(BUILD_TESTING)
+    add_subdirectory(tests)
+endif()
+

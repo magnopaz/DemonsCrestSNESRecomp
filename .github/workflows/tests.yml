@@ -1,0 +1,30 @@
+name: tests
+
+# No ROM, no submodules and no build: the injector unit test drives the
+# generated-code patcher against a synthetic bank file and rejects anchor drift.
+# The ROM-gated integration suite (ctest -L integration) is local-only by
+# design; see docs/TESTING.md.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  injector:
+    name: injector (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Python syntax
+        run: python -m py_compile tests/dc_test.py tools/dc_apply_widescreen_hooks.py
+      - name: Injector anchors, idempotency, drift
+        run: python tests/dc_test.py injector
+      - name: Injector usage
+        run: python tools/dc_apply_widescreen_hooks.py --help

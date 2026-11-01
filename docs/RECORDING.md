@@ -107,3 +107,22 @@ exactly the input frame N ran with**; replay writes it back at that same point.
   bit-exact comparison of two full sessions is still on the TODO list, so treat a
   replayed capture as very close rather than guaranteed identical until that test
   lands.
+
+## Environment switches
+
+| Variable | Effect |
+|---|---|
+| `SNESREC_AUTORECORD=1` | start a take on the first guest frame, so the log replays from boot (`record_take.ps1` uses this) |
+| `SNESREC_RECORD_DIR=<dir>` | where a take is written (default `<cwd>/captures`) |
+| `SNESREC_RING_DIR=<dir>` | rolling-buffer output directory |
+| `SNESREC_RING=1` | arm the rolling buffer at boot (what `record_last`/quit writes) |
+| `SNESREC_INPUT_ONLY=1` | write only `input_log.jsonl`, no per-frame BMPs |
+
+`SNESREC_AUTORECORD`, `SNESREC_RECORD_DIR` and the ring switches are upstream
+host features. `SNESREC_INPUT_ONLY` is currently a **local patch** to
+`snesrecomp/runner/src/desktop/host_main.c` (four lines around `RecTick`),
+carried by this checkout; `git submodule update` reverts it, and the recording
+then writes one BMP per frame again even though `record_take.ps1` asked for an
+input-only take. The script warns when that happens (it checks for a `frames/`
+directory after the run). Upstreaming the flag is tracked in
+`docs/PORTING_NOTES.md` ("Build notes").

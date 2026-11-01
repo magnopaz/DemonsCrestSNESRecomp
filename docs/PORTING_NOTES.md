@@ -561,6 +561,29 @@ default. The same probe also caught that a *partial* promotion is less
 stable than the full one (mixed AOT/interpreted bounces are timings the
 title does not tolerate as well); prefer promoting the full captured route.
 
+## Build notes (2026-10-31)
+
+- **Link warning.** The Windows MinGW link prints
+  `.rsrc merge failure: multiple non-default manifests`. Binutils merges the
+  framework's explicit UTF-8 manifest
+  (`runner/windows/snesrecomp_utf8.manifest`) with its own default one; the
+  explicit manifest is embedded (the executable contains `activeCodePage=UTF-8`,
+  and the host logs its process code page at startup). Link noise, not a missing
+  manifest; do not "fix" it by removing the UTF-8 resource.
+- **Execution policy.** The build defaults to `SNESRECOMP_EXECUTION_DEFAULT=off`
+  (prove the LLE floor). Release builds flip it to `on` only after a replacement
+  clears the framework's promotion gates (`snesrecomp/docs/PERFORMANCE.md`).
+- **Local framework patch.** The only uncommitted submodule change is the
+  four-line `SNESREC_INPUT_ONLY` guard in
+  `runner/src/desktop/host_main.c`'s `RecTick`, used by `record_take.ps1` to keep
+  a take input-log-only. `git submodule update` reverts it; the script then warns
+  that a take contains frames. Upstream it before the next framework pin bump.
+- **Source layout.** `src/dc_widescreen.c` is policy (scene gate, clamps, HUD
+  anchoring, diagnostics); `src/dc_ws_edge.c` is the measured BG staging model and
+  the far-right band repair; `src/dc_display.c` is presentation geometry. The
+  widescreen invariants are covered by the headless suite in `tests/` (see
+  `docs/TESTING.md`).
+
 ## Layout reminders
 
 - Generated C (`src/gen/`) is never committed; regenerate with

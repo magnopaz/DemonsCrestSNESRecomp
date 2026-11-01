@@ -32,6 +32,11 @@ void DcWidescreenReset(void);
 /* Publish this frame's policies. Called from begin_sim_frame. */
 void DcWidescreenConfigureFrame(void);
 
+/* The scene gate every widescreen policy keys on: stage gameplay (widescreen
+ * on, `$00FB` clear, area `$8D` in 1..0x7F, or the Mode 7 overworld's
+ * alternate-HUD area). Shared with the staged-window edge repair. */
+bool DcWsStageGameplay(void);
+
 /* Capture the native viewport for world-keyed margin history. Called from
  * end_sim_frame, after the frame's raster. No-op until the room-map capture
  * lands (plano, Fase 3). */
@@ -52,6 +57,9 @@ void DcWidescreenAfterRaster(void);
  * lead for a room that streams with a different window.
  *
  * `field` is width*height BGRA pixels with rows `pitch` bytes apart.
+ *
+ * Implemented in src/dc_ws_edge.c together with the measured staging model;
+ * the per-frame policy stays in dc_widescreen.c.
  */
 void DcWidescreenRepairField(uint8_t *field, unsigned pitch, int width,
                              int height);
