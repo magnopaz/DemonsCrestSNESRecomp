@@ -26,12 +26,16 @@ than real time: `DisableFrameDelay = 1`, dummy video/audio, software renderer).
 | `dc.geometry` | integration | P16 in a non-gameplay scene: the widened field (`SNESRECOMP_WS_EXTRA=48`) is 352×224, its center 256 columns are **byte-identical** to the 4:3 frame, and both margins are a flat pillarbox (the scene gate clamps, so no stale pixels survive) |
 | `dc.aspects` | integration | the mod's fixed-ratio views: 16:9 (342×224), 21:9 (448×224) and 32:9 (682×224) each keep the same center identity and a flat pillarbox |
 | `dc.determinism` | integration | two identical scripted runs (widescreen on) produce the same frame and WRAM SHA-256 |
-| `dc.staging_band` | integration | the far-right repair touches **exactly** the columns past the engine's staging frontier, in every captured frame (see `PORTING_NOTES.md`, "Widescreen: the engine's staging window") |
+| `dc.staging_band` | integration | the default stale-margin BG1 clamp fires on the level-end fixture and stays inside the margins (native view untouched bar the framework's boundary column); the **opt-in** continuation (`SNESRECOMP_WS_EDGE=1`) also stays inside them, turns the band into a tile-periodic continuation, and the default output equals `SNESRECOMP_WS_EDGE=0` (see `PORTING_NOTES.md`, "Widescreen: the engine's staging window") |
 
 `dc.staging_band` also needs a save state, because the band only exists during
-stage gameplay. Point `SNESRECOMP_TEST_SAVE` at any `.sav` the game can load
-into slot 0 (a state captured while walking a stage is ideal); the test SKIPs
-otherwise. It is the regression test for the artifact reported on the far right.
+stage gameplay. Point `SNESRECOMP_TEST_SAVE` at a `.sav` the game can load into
+slot 0 whose right margin holds content the engine has not restaged — a save at a
+**level end** is the reliable fixture (the ring has wrapped and the engine stopped
+restaging
+there). It SKIPs without one and fails with a clear message when the supplied
+save's margins are fully staged. It is the regression test for the artifact
+reported on the far right.
 
 A SKIP is exit code 77 (`SKIP_RETURN_CODE` in `tests/CMakeLists.txt`), so
 `ctest` stays green on a machine without a legally owned ROM. CI can therefore

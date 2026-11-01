@@ -115,17 +115,20 @@ normal play, but they matter to anyone scripting or capturing the game.
 3. **`run_to_frame` returns before the target frame is reached.** Clients that
    read memory immediately after the command see the old frame; poll `frame`
    until it reports the target.
-4. **Widescreen edge columns are repaired, not reconstructed.** Demon's Crest
-   stages its BG tilemaps just in time for the native 256-pixel view (the
-   newest staged column is only ~288–303 px ahead of the camera), so with a
-   wider field the outermost columns of the right margin have no tilemap data
-   yet: they held a cleared column or a previous room's tiles, which is the
-   strip that used to show up while walking. The port now continues the last
-   staged tile over that band after the raster (see
-   [`docs/PORTING_NOTES.md`](docs/PORTING_NOTES.md#widescreen-the-engines-staging-window-and-the-far-right-band-2026-10-31)),
-   so the background stays continuous; the real tilemap for those columns does
-   not exist yet, so it is not pixel-authentic. `SNESRECOMP_WS_EDGE=0` disables
-   the repair for A/B captures.
+4. **Widescreen margins: the level geometry stops where the engine stopped
+   staging.** Demon's Crest streams its BG1 tilemaps just in time for the native
+   256-pixel view and only keeps 0–48 px of world ahead of the camera, so a
+   widened margin can ask for columns that still hold the previous page — at the
+   end of the city stage that put the *entrance* gate (shop area, EXIT sign) on
+   the exit side. The port measures the staging (the tilemap lives in VRAM and
+   the engine is its only writer): when most of a margin is unstaged, BG1 is
+   clamped to the authentic 256 columns for that frame and the margin shows the
+   layers below it — the parallax city and backdrop, which are real content. The
+   city itself is not a bug: it is BG2 and the 4:3 frame already shows it at its
+   edge. `SNESRECOMP_WS_MARGIN_CLAMP=0` disables the clamp for A/B captures;
+   `SNESRECOMP_WS_EDGE=1` opts into an experimental continuation that repeats the
+   last staged tile instead (off by default — it replaces real content). See
+   [`docs/PORTING_NOTES.md`](docs/PORTING_NOTES.md#widescreen-the-engines-staging-window-and-the-far-right-band-2026-10-31-rev-4).
 5. **Boss sprite composition is only correct in the runner.** The native port
    built from these captures had to reassemble boss OAM parts itself and got
    them wrong for a while; that is a port problem, recorded here so the
@@ -184,13 +187,15 @@ idempotent injector run by `tools/regen.sh` and by the build. At margin 0 every
 injected expression evaluates to the authentic constant, so the object and
 sprite hooks add nothing to the 4:3 path.
 
-The engine stages its BG tilemaps for the 256-pixel view and only keeps
-~288–303 px of world ahead of the camera, so the picture beyond that is not in
-VRAM yet. The port continues the last staged tile over that band, which is
-invisible at 16:9 and becomes a visibly repeated strip at the extreme edges of
-21:9/32:9 — those two views are honest extra *screen*, not extra *game*: the
-far margins show the levels' edge material repeated rather than new rooms. See
-[`docs/PORTING_NOTES.md`](docs/PORTING_NOTES.md#widescreen-the-engines-staging-window-and-the-far-right-band-2026-10-31).
+The engine stages its BG1 tilemaps for the 256-pixel view and keeps only 0–48 px
+of world ahead of the camera, so the margins can hold the previous page where the
+engine has not restaged them. The port measures which columns are staged and, when
+most of a margin is not, clamps BG1 to the authentic 256 columns for that frame:
+the margin then shows the layers below the level geometry — the parallax city and
+the backdrop — instead of a foreign gate. Ordinary frames are untouched, and
+nothing is invented; at 21:9/32:9 this is what keeps the extreme edges showing
+real background. See
+[`docs/PORTING_NOTES.md`](docs/PORTING_NOTES.md#widescreen-the-engines-staging-window-and-the-far-right-band-2026-10-31-rev-4).
 
 Diagnostic kill-switches for A/B captures:
 `SNESRECOMP_WS_OAM=0` (object/sprite widening),

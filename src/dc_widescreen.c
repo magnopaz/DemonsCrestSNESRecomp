@@ -278,8 +278,22 @@ void DcWidescreenConfigureFrame(void) {
     /* Stage gameplay.
      * BG3 (layer index 2) is the status bar: DcAnchorStatusBar() remaps it to
      * the widened left edge on the bar's scanlines (Fase 6). BG1/BG2 extend
-     * into the margins. */
-    PpuSetWidescreenLayerClamp(g_ppu, 0);
+     * into the margins.
+     *
+     * Unless the engine has not staged them: the streamer only keeps 0..48 px
+     * of world ahead of the camera, and past that the ring still holds the
+     * previous page (a level's entrance gate drawn at its exit). When most of
+     * the right margin is unstaged, clamp BG1 (bit 0) to the authentic 256
+     * columns for this frame: the margins then show the layers below the level
+     * geometry -- the parallax city, the backdrop -- which is real content, and
+     * the foreign gate is simply not drawn. */
+    DcWidescreenTrackMargins();
+    {
+        int stale = DcWidescreenStaleMarginPixels();
+        int clamp = (stale > 0 && stale * 2 >= g_ws_extra &&
+                     DcWidescreenMarginClampEnabled()) ? 0x01 : 0;
+        PpuSetWidescreenLayerClamp(g_ppu, (uint8_t)clamp);
+    }
     PpuSetWidescreenLayerMask(g_ppu, 0);
     PpuSetWidescreenBg3Widen(g_ppu, 0);
     PpuSetWsHudOamShiftRange(g_ppu, 0, 0);

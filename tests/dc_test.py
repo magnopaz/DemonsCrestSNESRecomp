@@ -46,7 +46,6 @@ FRAME_WIDTH = 256
 MARGIN = 48  # the widened-field margin these tests use (KEEP in step with
              # SNESRECOMP_WS_EXTRA below and the staging model in
              # src/dc_widescreen.c)
-STAGE_LEAD = 304  # measured engine staging lookahead (DC_WS_STAGE_LEAD)
 
 CONFIG_TEMPLATE = """\
 [General]
@@ -187,13 +186,17 @@ def read_bgrx(path):
     return pixels, len(data) // (FRAME_HEIGHT * 4)
 
 
-def changed_columns(a_path, b_path):
-    """Columns whose pixels differ between two same-width frame dumps."""
-    a, wa = read_bgrx(a_path)
-    b, wb = read_bgrx(b_path)
-    if wa != wb:
-        raise Fail("frame widths differ: %d vs %d" % (wa, wb))
-    return [x for x in range(wa) if a[x::wa] != b[x::wa]]
+def changed_columns(a, b, width=None):
+    """Columns whose pixels differ between two frames (paths or arrays)."""
+    if isinstance(a, (str, pathlib.Path)):
+        a, wa = read_bgrx(a)
+        b, wb = read_bgrx(b)
+        if wa != wb:
+            raise Fail("frame widths differ: %d vs %d" % (wa, wb))
+        width = wa
+    if width is None:
+        raise Fail("changed_columns needs a width for raw arrays")
+    return [x for x in range(width) if a[x::width] != b[x::width]]
 
 
 def frame_has_content(path):
@@ -223,14 +226,6 @@ def prepare_dir(repo, case, widescreen):
     if widescreen:
         write_text(catalog / "state.toml", STATE_ENABLED)
 
-
-def band_start(camera, margin=MARGIN):
-    """First logical x the engine has not staged yet (model in dc_widescreen.c)."""
-    frontier = ((camera + STAGE_LEAD) // 16 * 16) & 0x1FF
-    ahead = frontier - camera
-    if ahead < 0:
-        ahead += 0x200
-    return ahead, 256 + margin
 
 
 # ───────────────────────────── unit: injector ─────────────────────────────
@@ -487,60 +482,121 @@ def test_determinism(repo, args):
         return "determinism: frame+WRAM SHA-256 identical across two runs"
 
 
+def eight_periodic(data, width, lo, hi):
+    """True when every row repeats with period 8 over [lo, hi).
+
+    The repair continues the last staged 8-px tile over the band, so a repaired
+    band is exactly tile-periodic -- a property the stale content does not have.
+    """
+    for y in range(FRAME_HEIGHT):
+        row = data[y * width:(y + 1) * width]
+        for x in range(lo, hi - 8):
+            if row[x] != row[x + 8]:
+                return False
+    return True
+
+
 def test_staging_band(repo, args):
-    """The far-right repair may touch exactly the unstaged band, nothing else."""
+    """The repair replaces exactly the band the engine has not staged.
+
+    The fixture is a save whose right margin holds another room's art (a level
+    end is the reliable one: the ring wrapped and the engine stopped restaging).
+    The test drives it twice, with SNESRECOMP_WS_EDGE=0 and =1, and asserts the
+    repair leaves the native view and the staged margin bit-identical, stays
+    inside the margins, and turns the stale band into the tile continuation.
+    """
     rom = require_rom(repo)
     save = args.save or os.environ.get("SNESRECOMP_TEST_SAVE")
     if not save:
         raise Skip("no save state: set SNESRECOMP_TEST_SAVE (or --save) to a "
-                   ".sav the game can load into slot 0")
+                   ".sav whose right margin shows another room (a level end)")
     save = pathlib.Path(save)
     if not save.is_file():
         raise Skip("save state not found: %s" % save)
     with tempfile.TemporaryDirectory(prefix="dc_band_") as td:
         tmp = pathlib.Path(td)
-        frames = {}
-        for name, repair in (("off", "0"), ("on", "1")):
+        cases = {}
+        for name, repair in (("off", "0"), ("on", "1"), ("default", None), ("noclamp", "0")):
             case = tmp / name
             prepare_dir(repo, case, widescreen=True)
             (case / "saves").mkdir()
             shutil.copyfile(save, case / "saves" / "save0.sav")
             script = ("loadstate 0\nwait 2\ndump s0\n"
-                      "press right 6\ndump s1\npress right 6\ndump s2\nquit\n")
-            run_game(args.exe, rom, case, script,
-                     env_extra={"SNESRECOMP_DUMP_DIR": str(case / "dump"),
-                                "SNESRECOMP_DUMP_FULL_FB": "1",
-                                "SNESRECOMP_WS_EXTRA": str(MARGIN),
-                                "SNESRECOMP_WS_EDGE": repair})
-            frames[name] = case
-        checked = 0
-        for tag in ("s0", "s1", "s2"):
-            off = frames["off"] / "dump" / (tag + ".fbwide.bgrx")
-            on = frames["on"] / "dump" / (tag + ".fbwide.bgrx")
-            if not off.is_file() or not on.is_file():
+                      "press right 6\ndump s1\nquit\n")
+            env = {"SNESRECOMP_DUMP_DIR": str(case / "dump"),
+                   "SNESRECOMP_DUMP_FULL_FB": "1",
+                   "SNESRECOMP_WS_EXTRA": str(MARGIN)}
+            if repair == "0" and name == "noclamp":
+                env["SNESRECOMP_WS_EDGE"] = "0"
+                env["SNESRECOMP_WS_MARGIN_CLAMP"] = "0"
+            elif repair is not None:
+                env["SNESRECOMP_WS_EDGE"] = repair
+            else:
+                env["SNESRECOMP_WS_EDGE"] = ""  # empty == default (off)
+            run_game(args.exe, rom, case, script, env_extra=env)
+            cases[name] = case
+        repaired = 0
+        for tag in ("s0", "s1"):
+            off_path = cases["off"] / "dump" / (tag + ".fbwide.bgrx")
+            on_path = cases["on"] / "dump" / (tag + ".fbwide.bgrx")
+            if not off_path.is_file() or not on_path.is_file():
                 raise Fail("missing frame %s" % tag)
-            _, width = read_bgrx(off)
-            regs_path = frames["on"] / "dump" / (tag + ".regs.json")
-            camera = json.loads(regs_path.read_text())["hscroll"][0]
-            ahead, _ = band_start(camera)
-            band_lo = ahead + MARGIN  # wide x of the first unstaged column
-            if width != FRAME_WIDTH + 2 * MARGIN:
-                raise Fail("unexpected widened frame width %d" % width)
-            changed = changed_columns(off, on)
-            expected = list(range(band_lo, width)) if band_lo < width else []
-            if changed != expected:
-                extra = [x for x in changed if x not in expected]
-                missing = [x for x in expected if x not in changed]
-                raise Fail(
-                    "%s (camera %d): repair touched the wrong columns "
-                    "(band starts at %d; extra %r; missed %r)" %
-                    (tag, camera, band_lo, extra[:8], missing[:8]))
-            if expected:
-                checked += 1
-        if not checked:
-            raise Skip("every captured frame had the right margin fully "
-                       "staged; walk further so the band is exercised")
-        return "staging band: repair confined to the predicted band in %d/3 frames" % checked
+            off_data, width = read_bgrx(off_path)
+            on_data, on_width = read_bgrx(on_path)
+            if on_width != width or width != FRAME_WIDTH + 2 * MARGIN:
+                raise Fail("%s: unexpected frame widths %d/%d"
+                           % (tag, width, on_width))
+            changed = changed_columns(off_data, on_data, width)
+            native = [x for x in changed
+                      if MARGIN <= x < MARGIN + FRAME_WIDTH]
+            if native:
+                raise Fail("%s: the repair touched the native view at %r"
+                           % (tag, native[:8]))
+            right_lo = MARGIN + FRAME_WIDTH
+            right = [x for x in changed if x >= right_lo]
+            if right:
+                repaired += 1
+                if not eight_periodic(on_data, width, min(right), width):
+                    raise Fail("%s: repaired band is not the tile continuation"
+                               % tag)
+                if eight_periodic(off_data, width, min(right), width):
+                    raise Fail("%s: the stale band was already periodic; the "
+                               "fixture does not exercise the repair" % tag)
+        if not repaired:
+            raise Fail("this save's margins are fully staged, so the repair had "
+                       "nothing to do; use a save at a level end where the right "
+                       "margin shows another room")
+        clamped = 0
+        for tag in ("s0", "s1"):
+            noc_data, noc_w = read_bgrx(cases["noclamp"] / "dump" / (tag + ".fbwide.bgrx"))
+            def_data, def_w = read_bgrx(cases["default"] / "dump" / (tag + ".fbwide.bgrx"))
+            if noc_w != def_w:
+                raise Fail("%s: clamp-off width differs" % tag)
+            clamp_changed = changed_columns(noc_data, def_data, def_w)
+            if clamp_changed:
+                clamped += 1
+                # The layer clamp can flip the boundary column itself (the
+                # framework's span edge); anything deeper would be a bug.
+                native = [x for x in clamp_changed
+                          if MARGIN + 1 <= x < MARGIN + FRAME_WIDTH - 1]
+                if native:
+                    raise Fail("%s: the margin clamp touched the native view at %r"
+                               % (tag, native[:8]))
+        if not clamped:
+            raise Fail("the margin clamp never fired on this save; use a save at a "
+                       "level end where the right margin is not staged")
+
+        for tag in ("s0", "s1"):
+            off_bytes = (cases["off"] / "dump" / (tag + ".fbwide.bgrx")).read_bytes()
+            default_bytes = (cases["default"] / "dump" /
+                             (tag + ".fbwide.bgrx")).read_bytes()
+            if off_bytes != default_bytes:
+                raise Fail("%s: the default frame differs from "
+                           "SNESRECOMP_WS_EDGE=0 (the repair is not off by "
+                           "default)" % tag)
+        return ("edge repair (opt-in): native view + staged margin "
+                "bit-identical, %d frame(s) continued as a tile repeat; "
+                "default output identical to WS_EDGE=0" % repaired)
 
 
 # ──────────────────────────────── dispatch ────────────────────────────────

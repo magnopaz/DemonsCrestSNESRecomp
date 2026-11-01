@@ -488,41 +488,64 @@ a run produces the same WRAM as a cold load; the new-format save round-trip
 and the intro fades render correctly. HUD states beyond full health/magic and
 a left-margin trailing-object capture remain as documented limitations.
 
-## Widescreen: the engine's staging window and the far-right band (2026-10-31)
+## Widescreen: the engine's staging window and the far-right band (2026-10-31, rev. 4)
 
-The owner reported that walking left the far-right margin showing the wrong
-background. It is not a renderer bug: the engine stages the BG tilemaps just in
-time for the authentic 256-pixel view, one 16x16 room cell at a time, and the
-wider field asks for columns it has not written yet.
+The owner reported that the far right of a widened field showed the level's
+*entrance* area — the shop gate with the EXIT sign — long after leaving it, first
+as a strip while walking, then, at the end of the city stage, as the whole right
+margin. Two revisions of guessing got this wrong; the final reading:
 
-Measured from a state dump plus the widened framebuffer (owner save,
-`SNESRECOMP_WS_EXTRA=48`, `SNESRECOMP_LAYER_MASK=1`, one room walked end to
-end): the engine writes two tilemap columns per update and its newest staged
-column is always `16 * floor((camera + 304) / 16)` — 288..303 px ahead of the
-camera, not 256. The BG tilemap ring is 64x32 (512 px), so the left margin (up
-to ~209 px of ring behind the camera) is always authentic, while the right
-margin runs past the frontier by up to one cell. The number of wrong margin
-columns per frame was exactly `margin - (frontier - camera - 256)` in all 60
-sampled frames, and the staged margin columns matched the same world region
-when it later became native content, pixel for pixel. Full table and method:
-`docs/WIDESCREEN.md` §"Janela de staging" (local design doc, not committed).
+**What is real and what is not.** The city behind the walls is BG2 (the parallax
+backdrop) and is real content everywhere: the 4:3 frame of the same spot already
+shows the town silhouette at its right edge. The EXIT gate, its fence and the
+platform under it are BG1 (level geometry) and belong to the stage's entrance.
+When the engine has not restaged a BG1 column for the world the widened field
+asks for, that column still holds the entrance tilemap — so the gate reappears at
+the exit. The bug is real, and it is BG1-only: BG2's margins are fine.
 
-`DcWidescreenRepairField()` (`src/dc_widescreen.c`, called from
-`end_sim_frame`) repairs the band on the composed field: it repeats the last
-staged 8-px tile (same phase) over `[frontier + margin, 256 + 2*margin)` and
-leaves every staged column untouched. Verified over 60 walked frames against
-the same build with the repair off: only the predicted band columns change and
-everything else is byte-identical; at 4:3 the pass is a no-op; two runs of the
-same route are byte-identical. A sprite inside the <=16 px band is covered by
-the background continuation.
+**Why the lead cannot be modelled.** From per-frame VRAM+state dumps over the
+owner's saves: the newest staged BG1 column sits 34–42 px past the native edge
+while walking the avenue, up to ~48 px after a room load, and at the native edge
+itself at a level's end. A fixed "camera + 304" frontier (rev. 1) therefore missed
+the band exactly where it was widest, and a post-raster continuation (rev. 2/3)
+replaced real margin content — including the real town — with a repeated tile,
+which read as artifacts on both sides.
 
-This is a repair, not a reconstruction — the engine has not produced that
-content yet. The permanent fixes are (a) biasing the room-cell staging cursor
-by the live margin on the engine side (the cursor is camera-driven; locating
+**The fix that shipped (default).** The BG tilemap ring (64x32 = 512 px) lives in
+VRAM at `(bgXsc & 0xfc) << 8` words (BG1 0x9000/0x9800 bytes, BG2 0x8000/0x8800)
+and the engine is its only writer, so a column whose entries changed since the
+previous frame was just restaged for the world it now serves. `src/dc_ws_edge.c`
+records that world per column and compares it with the world each margin pixel
+samples; a pixel is *knows-staged* only when they match. When at least half of the
+right margin is not staged, `dc_widescreen.c` calls
+`PpuSetWidescreenLayerClamp(ppu, 0x01)` for that frame: BG1 stays inside the
+authentic 256 columns and the margins show the layers *below* the level geometry
+— the parallax city and the backdrop. No invented pixels, no foreign gate, and
+the real background continues edge to edge. The clamp is re-applied every frame
+and re-evaluated from the measurement, so ordinary gameplay (where only a few
+pixels lag) is untouched: in a 1,000-frame walk the clamp fired on the first
+frame after the state load and never again, and every later frame was
+byte-identical to the pre-fix output.
+
+Switches: `SNESRECOMP_WS_MARGIN_CLAMP=0` disables the clamp (A/B captures);
+`SNESRECOMP_WS_EDGE=1` enables the old composed-field continuation instead (it
+repeats the last staged tile over the band; off by default because it replaces
+real content); `SNESRECOMP_WS_EDGE_DEBUG=1` prints the tracker state per frame.
+Mode 7 (the overworld) has no tilemap ring and is skipped. Tracking restarts on a
+map-base change, a camera jump or a door transition; at restart the native view
+plus the ring behind the camera count as staged, the right margin does not.
+
+`dc.staging_band` covers all of it: the clamp fires on the level-end fixture and
+only inside the margins, the opt-in continuation stays inside them too, the
+native view is untouched (bar the framework's boundary column), and the default
+output equals `SNESRECOMP_WS_EDGE=0`.
+
+**What is left.** A few pixels at the outer edge can still lag when the engine is
+behind by less than half a margin (below the clamp threshold) — the 4:3 view hides
+that by clipping at the same place. The permanent fix stays engine-side: bias the
+room-cell staging cursor by the live margin (its cursor is camera-driven; finding
 the comparison needs a debug-server watchpoint on the DMA descriptor push), or
-(b) expanding the room metatiles host-side with `WsShadowPrefillTile`.
-`SNESRECOMP_WS_EDGE=0` disables the repair; `SNESRECOMP_WS_STAGE_LEAD=<px>`
-overrides the measured lead for a room that streams with a different window.
+expand the room metatiles host-side with `WsShadowPrefillTile`.
 
 ## Rich configuration (validated 2026-10-10)
 

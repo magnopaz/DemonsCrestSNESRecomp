@@ -32,6 +32,18 @@ void DcWidescreenReset(void);
 /* Publish this frame's policies. Called from begin_sim_frame. */
 void DcWidescreenConfigureFrame(void);
 
+/* Measure this frame's margins (staged vs. unstaged columns) before the
+ * raster; the per-frame policy and the opt-in repair both read the result. */
+void DcWidescreenTrackMargins(void);
+
+/* Right-margin columns the engine has not staged for the world they are drawn
+ * for (0 when the margin is trustworthy). */
+int DcWidescreenStaleMarginPixels(void);
+
+/* Margin clamp policy switch (SNESRECOMP_WS_MARGIN_CLAMP=0 disables it for
+ * A/B captures). */
+int DcWidescreenMarginClampEnabled(void);
+
 /* The scene gate every widescreen policy keys on: stage gameplay (widescreen
  * on, `$00FB` clear, area `$8D` in 1..0x7F, or the Mode 7 overworld's
  * alternate-HUD area). Shared with the staged-window edge repair. */
