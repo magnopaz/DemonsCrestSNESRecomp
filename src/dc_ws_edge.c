@@ -78,7 +78,8 @@ static int s_tracks;           /* how many tracks are valid this frame */
 
 /* Result of the current frame's measurement (begin_sim_frame decides with it). */
 static int s_margin;           /* margin the measurement was taken with */
-static int s_first_bad = -1;   /* first right-margin pixel the engine has not staged */
+static int s_first_bad = -1;   /* first unstaged composed right-margin pixel */
+static int s_first_bad_bg1 = -1; /* first right-margin pixel not staged for BG1 */
 static int s_first_known_left = 0; /* first left-margin pixel that is staged */
 
 static int DcEdgeDebug(void) {
@@ -240,6 +241,7 @@ static int DcEdgeKnown(int x) {
 void DcWidescreenTrackMargins(void) {
     s_margin = 0;
     s_first_bad = -1;
+    s_first_bad_bg1 = -1;
     s_first_known_left = 0;
     if (!g_ppu)
         return;
@@ -271,6 +273,12 @@ void DcWidescreenTrackMargins(void) {
             break;
         }
     }
+    for (int x = DC_WS_NATIVE; x < DC_WS_NATIVE + margin; ++x) {
+        if (DcEdgePixelState(&s_track[0], x) <= 0) {
+            s_first_bad_bg1 = x;
+            break;
+        }
+    }
     for (int x = -margin; x < 0; ++x) {
         if (DcEdgeKnown(x)) {
             s_first_known_left = x;
@@ -284,10 +292,10 @@ void DcWidescreenTrackMargins(void) {
             known_n += DcEdgeKnown(x);
         fprintf(stderr,
                 "[wsedge] cam=%d h0=%d cols=%d ring=%d tracks=%d known=%d/%d "
-                "first_bad=%d\n",
+                "first_bad=%d first_bad_bg1=%d\n",
                 (int)s_track[0].cam, (int)(g_ppu->hScroll[0] & 0x3ff),
                 s_track[0].cols, s_track[0].ring, s_tracks, known_n,
-                DC_WS_NATIVE + 2 * margin, s_first_bad);
+                DC_WS_NATIVE + 2 * margin, s_first_bad, s_first_bad_bg1);
     }
 }
 
@@ -307,6 +315,15 @@ int DcWidescreenStaleMarginPixels(void) {
     if (s_first_bad < 0 || s_margin <= 0)
         return 0;
     return DC_WS_NATIVE + s_margin - s_first_bad;
+}
+
+/* Exclusive logical x where BG1 stops having engine-staged content. A fully
+ * staged margin ends at the widened field's right edge; no measurement means
+ * no clip. */
+int DcWidescreenBg1RightEdge(void) {
+    if (s_margin <= 0)
+        return 0;
+    return s_first_bad_bg1 < 0 ? DC_WS_NATIVE + s_margin : s_first_bad_bg1;
 }
 
 /* Copy one BGRA pixel between logical x positions (the margin maps them onto

@@ -40,8 +40,13 @@ void DcWidescreenTrackMargins(void);
  * for (0 when the margin is trustworthy). */
 int DcWidescreenStaleMarginPixels(void);
 
-/* Margin clamp policy switch (SNESRECOMP_WS_MARGIN_CLAMP=0 disables it for
- * A/B captures). */
+/* Exclusive logical x of BG1's first unstaged right-margin pixel, or the
+ * widened field's right edge when every margin pixel is staged. 0 means no
+ * measurement/no clip. */
+int DcWidescreenBg1RightEdge(void);
+
+/* Margin clip policy switch (SNESRECOMP_WS_MARGIN_CLAMP=0 disables it for
+ * A/B captures; the historical switch name is retained). */
 int DcWidescreenMarginClampEnabled(void);
 
 /* The scene gate every widescreen policy keys on: stage gameplay (widescreen

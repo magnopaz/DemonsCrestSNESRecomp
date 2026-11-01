@@ -82,6 +82,7 @@ bool DcWsStageGameplay(void) {
 
 static void DcClearPolicies(void) {
     PpuSetWidescreenLayerClamp(g_ppu, 0);
+    PpuSetWidescreenLayerRightEdge(g_ppu, 0, 0);
     PpuSetWidescreenLayerMask(g_ppu, 0);
     PpuSetWidescreenBg3Widen(g_ppu, 0);
     PpuSetWsHudOamShiftRange(g_ppu, 0, 0);
@@ -265,6 +266,7 @@ void DcWidescreenConfigureFrame(void) {
          * backdrop. The host's symmetric PpuSetExtraSpace still writes the
          * whole row, so no stale margin pixels survive a scene change. */
         PpuSetWidescreenLayerClamp(g_ppu, 0x07);
+        PpuSetWidescreenLayerRightEdge(g_ppu, 0, 0);
         PpuSetWidescreenLayerMask(g_ppu, 0);
         PpuSetWidescreenBg3Widen(g_ppu, 0);
         PpuSetWsHudOamShiftRange(g_ppu, 0, 0);
@@ -282,18 +284,18 @@ void DcWidescreenConfigureFrame(void) {
      *
      * Unless the engine has not staged them: the streamer only keeps 0..48 px
      * of world ahead of the camera, and past that the ring still holds the
-     * previous page (a level's entrance gate drawn at its exit). When most of
-     * the right margin is unstaged, clamp BG1 (bit 0) to the authentic 256
-     * columns for this frame: the margins then show the layers below the level
-     * geometry -- the parallax city, the backdrop -- which is real content, and
-     * the foreign gate is simply not drawn. */
+     * previous page (a level's entrance gate drawn at its exit). Clip BG1 at
+     * the first unstaged right-margin pixel for this frame. The valid prefix
+     * stays visible; only the stale tail reveals the layers below the level
+     * geometry -- the parallax city and the backdrop, which are real content.
+     * This also handles walking's short stale tails, which a whole-margin
+     * clamp threshold necessarily missed. */
     DcWidescreenTrackMargins();
-    {
-        int stale = DcWidescreenStaleMarginPixels();
-        int clamp = (stale > 0 && stale * 2 >= g_ws_extra &&
-                     DcWidescreenMarginClampEnabled()) ? 0x01 : 0;
-        PpuSetWidescreenLayerClamp(g_ppu, (uint8_t)clamp);
-    }
+    PpuSetWidescreenLayerClamp(g_ppu, 0);
+    PpuSetWidescreenLayerRightEdge(
+        g_ppu, 0, DcWidescreenMarginClampEnabled()
+                      ? DcWidescreenBg1RightEdge()
+                      : 0);
     PpuSetWidescreenLayerMask(g_ppu, 0);
     PpuSetWidescreenBg3Widen(g_ppu, 0);
     PpuSetWsHudOamShiftRange(g_ppu, 0, 0);
