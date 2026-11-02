@@ -118,3 +118,25 @@ addr = "829b"
 bank = 0
 emit = false
 note = "Task install/restart with status 8; no static callers found. LLE: context switch"
+
+# ── BG1 map restream (room load) ────────────────────────────────────────────
+# Enters at $00:C840 with the ring cursor $D0,X where the room loader left it,
+# walks the cursor back 4 columns, then writes a fixed budget of columns
+# ($14 = 20 → 21 iterations → 42 columns = 336 px) by calling the map writer
+# $D57F two columns at a time, yielding to the scheduler every 4 columns
+# (jsl $80821E = TaskYield), which is why the burst spans several frames.
+# The budget is the engine's streaming lookahead: measured with the VRAM write
+# trace, the frontier ends 304 px past the camera — only 48 px past the
+# authentic 256-px view — so a widescreen leading margin wider than 48 px reads
+# a ring column that still holds the previous revolution (see
+# docs/HANDOFF-widescreen-staging.md §10).
+# Kept LLE: the analyzer refuses to emit it in any M/X variant because of the
+# in-line TaskYield, so the widescreen catch-up cannot patch the budget here.
+# The hook instead runs in the AOT per-frame tracker $00:CF7D (bank_00_CF7D),
+# which drives the same $D57F writer — see tools/dc_apply_widescreen_hooks.py.
+[[func]]
+name = "StreamRestream"
+addr = "c840"
+bank = 0
+emit = false
+note = "BG1 map restream/refill loop; fixed 42-column budget = 304-px lookahead (LLE: in-line TaskYield)"

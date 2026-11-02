@@ -154,6 +154,23 @@ static void DcEdgeRestart(DcEdgeTrack *t, const Ppu *ppu, int layer, int h) {
     t->ring = t->cols * DC_WS_TILE;
     t->last_h = h;
     t->cam = h;
+    /* COLD START: distrust what the streamer has not vouched for.
+     *
+     * Measured with the frame buffer as oracle (walk 163 px, compare each
+     * leading-margin column against the same world once it is native): the
+     * margin content right after a *room build* is genuinely correct -- 0
+     * mismatched BG1/BG2 map entries and identical tile patterns, 23.6% pixel
+     * difference against a 0.8% noise floor, versus 51.2% when this cold start
+     * also declares the leading margin unstaged and dc_widescreen.c clips BG1
+     * there. So the clip is pessimistic right after a load.
+     *
+     * It cannot simply be trusted, though: trusting the whole ring also
+     * disables the level-end case this clip exists for (a level's entrance
+     * gate drawn at its exit) -- dc.staging_band catches that immediately.
+     * Distinguishing the two needs evidence the tracker does not have yet
+     * (a room-build restage burst is the natural signal: a build rewrites the
+     * whole ring, a level end rewrites nothing), so this stays as measured
+     * until that promotion exists. See docs/PORTING_NOTES.md. */
     for (int c = 0; c < DC_WS_MAP_COLS_MAX; ++c) {
         t->known[c] = INT32_MIN;
         if (c < t->cols) {

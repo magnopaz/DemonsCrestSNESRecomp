@@ -29,6 +29,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <limits.h>
 
 #include "desktop/config.h"
 #include "snes/ppu.h"
@@ -250,6 +251,10 @@ void DcWidescreenConfigureFrame(void) {
     if (!g_ppu)
         return;
 
+    /* Count down the streaming catch-up delay in frames (the debt itself is
+     * armed by the staged-window tracker when a room restream is seen). */
+    DcWsStreamCatchUpTick();
+
     if (!DcDisplay_IsWidescreenEnabled() || !DcDisplay_IsWidescreenActive()) {
         DcClearPolicies();
         /* The upload-cover policy (transient forced blank + HDMA disable
@@ -291,6 +296,16 @@ void DcWidescreenConfigureFrame(void) {
      * This also handles walking's short stale tails, which a whole-margin
      * clamp threshold necessarily missed. */
     DcWidescreenTrackMargins();
+    /* The staging frontier is NOT poked from here.
+     *
+     * $00D0,X is the streamer's ring cursor (measured (cam>>3)+35 mod 64, i.e.
+     * 273..288 px ahead of the camera -- only 17..32 px past the native edge),
+     * and an env-gated experiment that nudged it by +/-6/+12 every frame made
+     * the tracker's staged-column count collapse (335 -> 255..287 of 398): the
+     * engine then writes the *next* column straight into the ring, leaving the
+     * columns it skipped holding their previous page. Moving the pointer is not
+     * the lever; the comparison that decides when to advance it is. See
+     * docs/PORTING_NOTES.md. */
     PpuSetWidescreenLayerClamp(g_ppu, 0);
     PpuSetWidescreenLayerRightEdge(
         g_ppu, 0, DcWidescreenMarginClampEnabled()
@@ -402,3 +417,150 @@ int DcWsLiveMargin(void) {
 }
 
 int DcWsObjectCullMargin(void) { return DcWsLiveMargin(); }
+
+/*
+ * ---- Engine streaming lookahead -------------------------------------------
+ *
+ * The BG1 map restream (bank $00, `StreamRestream` at $C840) writes a FIXED
+ * column budget — 21 writer calls, 42 columns, 336 px — and always starts it
+ * 4 columns (32 px) behind the ring cursor the room loader left, so the ring
+ * frontier ends 304 px past the camera, i.e. only 48 px past the authentic
+ * 256-px view. Measured with the VRAM write trace plus the per-frame camera
+ * (docs/HANDOFF-widescreen-staging.md §10): leading-margin pixel k is staged
+ * for the world it draws while k <= 45 and is a full ring revolution stale from
+ * k ~= 50 on, in every room and at every camera position. A 16:9 margin is
+ * 71 px, so its outer ~21 px are permanently one page behind.
+ *
+ * The control is the restream budget: the routine tracks the camera
+ * afterwards (2 columns per 16 px of scroll, `bank_00_CF7D`), so widening the
+ * budget ONCE at room load shifts the frontier permanently. Each extra writer
+ * call stages 2 more columns = 16 px. Margin <= 48 needs nothing, which is why
+ * 4:3 and 3:2 (extra 40) stay bit-identical.
+ *
+ * `SNESRECOMP_WS_STREAM_AHEAD=<columns>` forces a value for A/B captures;
+ * 0 disables the whole thing.
+ */
+enum {
+    /* Measured staged depth past the native edge with the authentic budget. */
+    DC_WS_STREAM_BASE_AHEAD = 48,
+    /* The map writer stages two columns per call. */
+    DC_WS_STREAM_COLS_PER_CALL = 2,
+    /* Keep the widened budget inside the ring: 71 left + 256 + 71 + this must
+     * stay under the 512-px ring, and more lookahead than the margin cannot
+     * buy anything the frame shows. */
+    DC_WS_STREAM_MAX_COLS = 96,
+};
+
+static int DcStreamAheadOverride(void) {
+    static int value = -2;
+    if (value == -2) {
+        const char *env = getenv("SNESRECOMP_WS_STREAM_AHEAD");
+        value = env && env[0] ? atoi(env) : -1;
+        if (value < 0)
+            value = -1;
+    }
+    return value;
+}
+
+int DcWsStreamAheadColumns(void) {
+    int override = DcStreamAheadOverride();
+    if (override >= 0)
+        return override > DC_WS_STREAM_MAX_COLS ? DC_WS_STREAM_MAX_COLS : override;
+    /* The margin the frame is actually rendered at, NOT DcWsLiveMargin(): the
+     * restream runs during a door transition, where the scene policy has BG1
+     * clamped and the live margin is 0 — measured as `iters=0` on exactly the
+     * frames whose cursor burst identifies the restream. The rendered width is
+     * steady across the transition, so the debt is the same before and after. */
+    int width = DcDisplay_FrameWidth();
+    int margin = width > 256 ? (width - 256) / 2 : 0;
+    if (margin <= DC_WS_STREAM_BASE_AHEAD)
+        return 0;
+    /* 8-px columns, rounded up to a whole writer call. */
+    int cols = (margin - DC_WS_STREAM_BASE_AHEAD + 7) / 8;
+    cols = (cols + DC_WS_STREAM_COLS_PER_CALL - 1) / DC_WS_STREAM_COLS_PER_CALL *
+           DC_WS_STREAM_COLS_PER_CALL;
+    if (cols > DC_WS_STREAM_MAX_COLS)
+        cols = DC_WS_STREAM_MAX_COLS;
+    return cols;
+}
+
+/* Extra writer calls the restream budget must cover. */
+int DcWsStreamAheadIters(void) {
+    return DcWsStreamAheadColumns() / DC_WS_STREAM_COLS_PER_CALL;
+}
+
+/*
+ * The restream itself runs on the interpreter tier (in-line TaskYield), so the
+ * hook cannot widen its budget at $00:C858. What it can do is owe the engine a
+ * few extra writer calls and pay them from the AOT per-frame tracker at
+ * $00:CF7D, which drives the same $D57F map writer.
+ *
+ * The debt is armed by watching the ring cursor ($00D0), and the signature used
+ * is the restream's *burst*: it writes 4 columns per frame between TaskYields
+ * (measured: frames 494416..494420 of dark-avenue, columns 0-3, 6-9, 14-17,
+ * 22-25, 30-33), where the steady-state tracker only ever advances 0 or 2
+ * columns in a frame (2 per 16 px of scroll). Requiring two consecutive
+ * burst frames is what keeps a state load from arming it: a load jumps the
+ * cursor once and then sits still. That distinction matters — arming on
+ * "scene changed" (a camera jump, an init, a state load) was measured to make
+ * the margin *worse*, because those events do not rebuild the map and the four
+ * columns then get written from whatever source phase is live, for the wrong
+ * world.
+ *
+ * Paying while the burst is still running is safe and equivalent: the extra
+ * pair is written at the cursor with the source phase the burst itself is
+ * using, so the burst simply continues four columns further and the frontier
+ * lands 32 px ahead. Columns our own catch-up advances are subtracted from the
+ * observed delta so the debt cannot re-arm itself.
+ */
+enum {
+    DC_WS_STREAM_BURST_COLUMNS = 4,   /* columns the burst advances per frame */
+    DC_WS_STREAM_BURST_FRAMES = 2,    /* consecutive burst frames = a restream */
+};
+
+static uint8_t s_stream_last_cursor;
+static int s_stream_have_cursor;
+static int s_stream_burst_run;
+static int s_stream_owed_pairs;
+static int s_stream_self_advance;
+static int s_stream_debug = -1;
+
+/* One call per frame, before the guest runs, so a frame time step is a frame. */
+void DcWsStreamCatchUpTick(void) {
+    /* Watch the ring cursor of the first stream channel. $D0/$D1 and $D2/$D3
+     * are the per-layer ring cursors ($D0,X with X = 0..3); they run the same
+     * burst a few frames apart and both park at 36 columns after a room build,
+     * so either one is a valid witness. $00D0 is read here on purpose: $10 holds
+     * the layer index only *inside* the routines that load it, and at frame
+     * boundaries it is whatever the last caller left there (measured: 2, 0, 11,
+     * 224 across one room), so $D0 + $10 is meaningless from the host. */
+    uint8_t cursor = g_ram[0xD0];
+    if (s_stream_have_cursor) {
+        int delta = (int)(uint8_t)(cursor - s_stream_last_cursor) & 0x3F;
+        delta = (delta - s_stream_self_advance) & 0x3F;
+        if (s_stream_debug)
+            fprintf(stderr, "[ws-stream] cur=%2u delta=%2d run=%d owed=%d iters=%d\n",
+                    (unsigned)cursor, delta, s_stream_burst_run,
+                    s_stream_owed_pairs, DcWsStreamAheadIters());
+        if (delta >= DC_WS_STREAM_BURST_COLUMNS) {
+            if (++s_stream_burst_run >= DC_WS_STREAM_BURST_FRAMES)
+                s_stream_owed_pairs = DcWsStreamAheadIters();
+        } else {
+            s_stream_burst_run = 0;
+        }
+    }
+    s_stream_self_advance = 0;
+    s_stream_last_cursor = cursor;
+    s_stream_have_cursor = 1;
+}
+
+/* Called from the injected $00:CF7D preamble: hand out the whole debt once. */
+int DcWsStreamCatchUpTake(int layer) {
+    if (layer != 0 || s_stream_owed_pairs <= 0)
+        return 0;
+    int pairs = s_stream_owed_pairs;
+    s_stream_owed_pairs = 0;
+    /* Our own advance must not read back as a restream burst next frame. */
+    s_stream_self_advance = (s_stream_self_advance + 2 * pairs) & 0x3F;
+    return pairs;
+}
