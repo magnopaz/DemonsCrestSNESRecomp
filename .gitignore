@@ -48,3 +48,4 @@ captures/
 # Python bytecode from the headless test harness
 __pycache__/
 *.pyc
+rom/
