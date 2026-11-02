@@ -40,6 +40,12 @@ void DcWidescreenTrackMargins(void);
  * for (0 when the margin is trustworthy). */
 int DcWidescreenStaleMarginPixels(void);
 
+/* Left-margin columns the engine has not staged for the world they are drawn
+ * for (0 when the margin is trustworthy, `margin` when none of it is staged).
+ * The trailing margin is the one the streamer rewrites last, so it holds the
+ * ring's previous page after a revolution and at a level's start. */
+int DcWidescreenStaleLeftMarginPixels(void);
+
 /* Exclusive logical x of BG1's first unstaged right-margin pixel, or the
  * widened field's right edge when every margin pixel is staged. 0 means no
  * measurement/no clip. */

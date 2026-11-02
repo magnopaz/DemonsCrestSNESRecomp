@@ -91,10 +91,25 @@ python tools/dc_apply_widescreen_hooks.py --check --no-strict   # report only
 
 ## Continuous integration
 
-`.github/workflows/tests.yml` runs the injector unit test on Ubuntu and Windows
-for every push and pull request. It needs no submodules, no ROM and no build, so
-it stays fast and works on a fresh checkout — it is the job that catches a
-generated-code anchor drifting or the injector regressing.
+`.github/workflows/tests.yml` has two jobs:
+
+* **injector** (Ubuntu + Windows, every push and pull request) needs no
+  submodules, no ROM and no build, so it stays fast and works on a fresh
+  checkout — it is the job that catches a generated-code anchor drifting or the
+  injector regressing.
+* **build** (Ubuntu) compiles the **setup host**: `-DSNESRECOMP_SETUP_HOST=ON`
+  with an empty `src/gen`, the combination a release zip ships. It checks out
+  the submodules and installs `ninja-build libsdl2-dev libgl1-mesa-dev`, then
+  builds and runs `ctest -L unit`. It needs no ROM and no Rust (Rust is only
+  needed to *generate* `src/gen`, which this job deliberately does not have).
+
+The build job exists because CI used to compile nothing: a missing
+`#include <errno.h>` in `snesrecomp/runner/src/desktop/host_main.c` reached a
+commit — MinGW pulls `errno` in through `<windows.h>`/`<direct.h>`, so Windows
+built, while Linux/macOS failed with `'errno' undeclared` and the title was
+unbuildable there (and the Alt+R take-recording path was never compiled). Any
+change to `src/`, the host contract or the framework pin now has to survive a
+non-Windows compiler before it lands.
 
 The `integration` label needs a legally owned ROM, which CI cannot provide, so
 those tests stay local/self-hosted by design. A setup-host build

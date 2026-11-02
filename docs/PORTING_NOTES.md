@@ -596,11 +596,22 @@ title does not tolerate as well); prefer promoting the full captured route.
 - **Execution policy.** The build defaults to `SNESRECOMP_EXECUTION_DEFAULT=off`
   (prove the LLE floor). Release builds flip it to `on` only after a replacement
   clears the framework's promotion gates (`snesrecomp/docs/PERFORMANCE.md`).
-- **Local framework patch.** The only uncommitted submodule change is the
-  four-line `SNESREC_INPUT_ONLY` guard in
-  `runner/src/desktop/host_main.c`'s `RecTick`, used by `record_take.ps1` to keep
-  a take input-log-only. `git submodule update` reverts it; the script then warns
-  that a take contains frames. Upstream it before the next framework pin bump.
+- **Local framework patch.** The framework submodule carries two local
+  changes. `SNESREC_INPUT_ONLY` (four lines in
+  `runner/src/desktop/host_main.c`'s `RecTick`, used by `record_take.ps1` to
+  keep a take input-log-only) is uncommitted working-tree state; a
+  `git submodule update` reverts it and the script then warns that a take
+  contains frames. The second is committed locally as `a9d25f4` on
+  `demons-crest/host-hooks` and **not pushed**: `#include <errno.h>` in
+  `runner/src/desktop/host_main.c`, without which `RecEnsureDir()` does not
+  compile anywhere but MinGW (`'errno' undeclared` / `'EEXIST' undeclared`) and
+  the whole title is unbuildable off Windows. Push that commit to
+  `magnopaz/snesrecomp` and bump the pin; until that push happens **do not
+  commit the parent repository's submodule pointer** (it would name a commit
+  nobody else can fetch), so `git status` shows `snesrecomp` as modified on
+  purpose.
+  `.github/workflows/tests.yml`'s `build` job compiles the host on Ubuntu and
+  is the guard that keeps a third one of these from shipping.
 - **Source layout.** `src/dc_widescreen.c` is policy (scene gate, clamps, HUD
   anchoring, diagnostics); `src/dc_ws_edge.c` is the measured BG staging model and
   the far-right band repair; `src/dc_display.c` is presentation geometry. The

@@ -1,7 +1,23 @@
 name: tests
 
-# No ROM, no submodules and no build: the injector unit test drives the
-# generated-code patcher against a synthetic bank file and rejects anchor drift.
+# Two jobs, and they cover different failure modes:
+#
+#   injector  no ROM, no submodules, no build: the generated-code patcher is
+#             driven against a synthetic bank file and rejects anchor drift.
+#   build     compiles the SETUP HOST (the same host sources and the same
+#             executable minus the recompiled code) on Linux. No ROM, no
+#             src/gen, no Rust: `-DSNESRECOMP_SETUP_HOST=ON` with an empty
+#             src/gen is exactly what a release zip contains, and it is the
+#             only thing here that puts the framework host through a compiler
+#             on a non-Windows toolchain.
+#
+# The build job exists because a missing `#include <errno.h>` in
+# snesrecomp/runner/src/desktop/host_main.c shipped: MinGW pulls errno in
+# through <windows.h>/<direct.h>, so Windows compiled, while every other
+# toolchain failed with "'errno' undeclared" and made the title unbuildable on
+# Linux/macOS -- and left the take-recording path uncompiled everywhere else.
+# Nothing in CI compiled a single line, so nothing said so.
+#
 # The ROM-gated integration suite (ctest -L integration) is local-only by
 # design; see docs/TESTING.md.
 on:
@@ -28,3 +44,39 @@ jobs:
         run: python tests/dc_test.py injector
       - name: Injector usage
         run: python tools/dc_apply_widescreen_hooks.py --help
+
+  build:
+    name: build setup host (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # Ubuntu is the toolchain the errno bug broke. macOS is the other
+        # non-Windows target and joins this matrix once its SDL/OpenGL
+        # packages are pinned here.
+        os: [ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout (with the framework submodules; no src/gen, no ROM)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libsdl2-dev libgl1-mesa-dev
+      # SDL2 rather than the SDL3 default: with no SDL3 package installed the
+      # framework builds SDL3 from source, which is minutes of CI for a backend
+      # that has no bearing on whether the host compiles.
+      - name: Configure
+        run: >
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DSNESRECOMP_SETUP_HOST=ON -DSNESRECOMP_SDL_BACKEND=SDL2
+      - name: Build
+        run: cmake --build build -j"$(nproc)"
+      # dc.injector must pass; dc.injector_check SKIPs (exit 77) without
+      # src/gen, which is the documented behaviour for a setup-host build.
+      - name: Headless suite (unit)
+        run: ctest --test-dir build -L unit --output-on-failure

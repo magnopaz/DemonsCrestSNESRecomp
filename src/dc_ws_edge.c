@@ -292,10 +292,11 @@ void DcWidescreenTrackMargins(void) {
             known_n += DcEdgeKnown(x);
         fprintf(stderr,
                 "[wsedge] cam=%d h0=%d cols=%d ring=%d tracks=%d known=%d/%d "
-                "first_bad=%d first_bad_bg1=%d\n",
+                "first_bad=%d first_bad_bg1=%d first_known_left=%d\n",
                 (int)s_track[0].cam, (int)(g_ppu->hScroll[0] & 0x3ff),
                 s_track[0].cols, s_track[0].ring, s_tracks, known_n,
-                DC_WS_NATIVE + 2 * margin, s_first_bad, s_first_bad_bg1);
+                DC_WS_NATIVE + 2 * margin, s_first_bad, s_first_bad_bg1,
+                s_first_known_left);
     }
 }
 
@@ -315,6 +316,28 @@ int DcWidescreenStaleMarginPixels(void) {
     if (s_first_bad < 0 || s_margin <= 0)
         return 0;
     return DC_WS_NATIVE + s_margin - s_first_bad;
+}
+
+/* Left-margin twin of DcWidescreenStaleMarginPixels().
+ *
+ * The engine streams a room's columns ahead of the camera, so the *trailing*
+ * (left) margin is the one it rewrites last: after a ring revolution, or at a
+ * level's start where the world before x=0 does not exist at all, the left
+ * margin still holds whatever the ring last carried -- often another page.
+ * `s_first_known_left` is the first left-margin pixel that is staged: 0 means
+ * none of them is, -margin means all of them are.
+ *
+ * There is no per-pixel left clip in the framework (only
+ * PpuSetWidescreenLayerRightEdge), so the policy that consumes this either
+ * keeps BG1 out of both margins for the frame (PpuSetWidescreenLayerClamp) or
+ * leaves it; a handful of stale pixels is below the threshold that justifies
+ * dropping the staged margin on the other side. */
+int DcWidescreenStaleLeftMarginPixels(void) {
+    if (s_margin <= 0)
+        return 0;
+    if (s_first_known_left >= 0)
+        return s_margin; /* nothing in the left margin is staged */
+    return -s_first_known_left;
 }
 
 /* Exclusive logical x where BG1 stops having engine-staged content. A fully
