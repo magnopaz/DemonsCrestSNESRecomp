@@ -29,6 +29,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <limits.h>
 
 #include "desktop/config.h"
 #include "snes/ppu.h"
@@ -291,6 +292,16 @@ void DcWidescreenConfigureFrame(void) {
      * This also handles walking's short stale tails, which a whole-margin
      * clamp threshold necessarily missed. */
     DcWidescreenTrackMargins();
+    /* The staging frontier is NOT poked from here.
+     *
+     * $00D0,X is the streamer's ring cursor (measured (cam>>3)+35 mod 64, i.e.
+     * 273..288 px ahead of the camera -- only 17..32 px past the native edge),
+     * and an env-gated experiment that nudged it by +/-6/+12 every frame made
+     * the tracker's staged-column count collapse (335 -> 255..287 of 398): the
+     * engine then writes the *next* column straight into the ring, leaving the
+     * columns it skipped holding their previous page. Moving the pointer is not
+     * the lever; the comparison that decides when to advance it is. See
+     * docs/PORTING_NOTES.md. */
     PpuSetWidescreenLayerClamp(g_ppu, 0);
     PpuSetWidescreenLayerRightEdge(
         g_ppu, 0, DcWidescreenMarginClampEnabled()

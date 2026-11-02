@@ -612,6 +612,80 @@ title does not tolerate as well); prefer promoting the full captured route.
   purpose.
   `.github/workflows/tests.yml`'s `build` job compiles the host on Ubuntu and
   is the guard that keeps a third one of these from shipping.
+- **Widescreen margins: what is measured, and the one thing that is not.** The
+  engine stages ~32..48 px of world past the native edge, so any margin wider
+  than that shows columns the streamer has not reached. Measured with the frame
+  buffer as oracle — walk 163 px and compare each leading-margin column against
+  the same world once it is native (`scripts` recipe below) — on
+  `lvl_VII_phalanxs-fortress-front-hall` at `WS_EXTRA=71`:
+
+  | band | mismatch vs ground truth |
+  |---|---|
+  | control (world native in both frames = noise floor) | 0.8% |
+  | **trailing (left) margin** | **0.0%** |
+  | leading (right) margin, shipped clip active | **51.2%** |
+  | leading (right) margin, `SNESRECOMP_WS_MARGIN_CLAMP=0` | 23.6% |
+
+  Two conclusions. The trailing margin is pixel-exact — the ring's streamed
+  content behind the camera is correct, and the "raw VRAM is wrong in the
+  trailing gutter" note above applies only to the history path, not to the
+  default. And the shipped per-frame clip, not the engine, is the biggest single
+  source of the "the level is being drawn inside my view" artifact: it clips BG1
+  across the whole leading margin on every load because
+  `DcEdgeRestart()` marks only the native window and the just-wrapped columns as
+  known. The map content there is *correct* (0 mismatched BG1/BG2 entries and
+  identical tile patterns once that world is native).
+  Trusting the ring at cold start fixes it (51.2% → 23.6%, i.e. down to the
+  clip-off baseline) but also disables the level-end guard — `dc.staging_band`
+  fails immediately — so it is not shipped. The discriminator to implement is a
+  room-build restage burst (a build rewrites the whole ring; a level end
+  rewrites nothing) promoting the ring to trusted, after which the clip only
+  fires for the case it was written for.
+  Until then the honest mitigation is geometric: keep the margin at or under
+  the streamer's reach. 16:9 (extra 71) and wider always exceed it; 3:2 (extra
+  40) does not.
+  The manifest's own text claims margin columns "continue the last staged tile",
+  which describes `DcWidescreenRepairField()` — off by default. Keep the two in
+  sync when either changes.
+- **Engine streaming: what the RE established (trace build).** With
+  `-DSNESRECOMP_ENABLE_TRACE=ON` the debug server exposes `func_watch_arm/get`,
+  `dispatch_log_get`, `ppu_dmas` and `ppu_frames`; `ppu_dmas` alone answers
+  "how does the map get to VRAM". The engine (a) DMAs whole 2048-byte pages of
+  the BG2 map (`breg 2118`, dest VRAM `0x4000`/`0x4400`) every ~6 frames from a
+  rotating window of WRAM `$7E:9000..$7E:F000`, and (b) patches single 64-byte
+  columns and 12-byte cells into the BG1 map (`0x49c0`/`0x49e0`), channel 0,
+  line 225 (vblank). Every VRAM data write funnels through `$8B4A` (CPU copy);
+  the DMA setups go through `$8ADD` (`$4305`/`$2116` from DP `$14`/`$18`).
+  The staging cursor is `$00D0,X` — a 64-column ring index, measured
+  `(cam>>3)+35 mod 64`, i.e. the frontier sits 273..288 px ahead of the camera
+  and only **17..32 px past the native edge** (tighter than the 34..48 px the
+  edge tracker measures while walking). The routine that maintains it is
+  `bank_00_CF7D` (`$00:CF7D`), with the parallel per-layer arrays at
+  `$00C0,X` (camera mirror), `$00DC,X` and `$00D0,X`.
+  **Nudging the cursor does not work**: writing `$00D0` +6/-6/+12 every frame
+  collapsed the tracker's staged-column count from 335/398 to 255..287/398,
+  because the streamer then writes its *next* column into the ring and leaves
+  the skipped ones holding the previous page. The lever is the comparison that
+  advances the cursor, not the pointer.
+- **How the ring is actually refreshed (per-frame VRAM diff, corrected model).**
+  Diffing the BG1 map word by word against the previous frame while walking
+  shows the engine restaging **pairs of columns 32 apart** — ring column `P` and
+  `P+32` — with `P = (cam>>3)+4 mod 64`, advancing 2 columns per event (one
+  event per ~16 px of scroll). A column keeps the content it was given for a
+  whole revolution; verified by hashing ring column 6: written at cam=22, it is
+  displayed unchanged at cam 36..50 (i.e. the write lands ~14..28 px ahead of
+  first display), then holds the next revolution's content until cam 531..545.
+  So the content for world `cam+256+k` was written ~250 px of scroll earlier —
+  which means the leading margin is normally **correct**, and the earlier "the
+  engine only stages 32..48 px ahead" reading measured the *sweep front*, not a
+  permanent limit. What is actually wrong is the **ramp-up after a room build**:
+  `front-hall` (entered 163 px earlier) shows k<48 correct and k>=48 at ~50%
+  wrong, while `demon-realm` (walked 1470 px mid-room) is at 4% against a 0.8%
+  floor. That is the artifact in the recording: the first ~250..500 px of scroll
+  in a freshly built room, until the sweep reaches the margin.
+  Therefore the fix belongs at the **room-build** end (stage the `margin/8`
+  extra columns when the room is built, instead of waiting for the rolling
+  sweep), not at the lookahead constant.
 - **Source layout.** `src/dc_widescreen.c` is policy (scene gate, clamps, HUD
   anchoring, diagnostics); `src/dc_ws_edge.c` is the measured BG staging model and
   the far-right band repair; `src/dc_display.c` is presentation geometry. The
