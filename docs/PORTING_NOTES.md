@@ -683,9 +683,20 @@ title does not tolerate as well); prefer promoting the full captured route.
   wrong, while `demon-realm` (walked 1470 px mid-room) is at 4% against a 0.8%
   floor. That is the artifact in the recording: the first ~250..500 px of scroll
   in a freshly built room, until the sweep reaches the margin.
-  Therefore the fix belongs at the **room-build** end (stage the `margin/8`
-  extra columns when the room is built, instead of waiting for the rolling
-  sweep), not at the lookahead constant.
+  The cause is the engine's streaming lookahead, not the build: the room
+  restream (`$00:C840`) fills a fixed 42 columns (336 px) from 4 columns behind
+  the ring cursor, so the frontier parks 304 px past the camera — only 48 px
+  beyond the authentic 256-px view — and the per-frame tracker (`$00:CF7D`)
+  keeps that phase forever (+2 columns per 16 px). A 71-px margin therefore
+  reads a ring column that still holds the previous 512-px revolution, in every
+  room and at every camera position, not only at room start.
+  The fix owes the engine extra writer calls when it sees the restream's cursor
+  burst and pays them from the AOT tracker, using the engine's own map writer
+  (`$00:D57F`), which moves the frontier to 336 px. See
+  `docs/HANDOFF-widescreen-staging.md` §10 for the measurements, the content
+  proof (byte-identical columns) and the arming rule — arming it on a scene
+  change or a state load writes four columns from the wrong source phase and
+  makes the margin visibly worse.
 - **Source layout.** `src/dc_widescreen.c` is policy (scene gate, clamps, HUD
   anchoring, diagnostics); `src/dc_ws_edge.c` is the measured BG staging model and
   the far-right band repair; `src/dc_display.c` is presentation geometry. The

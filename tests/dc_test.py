@@ -263,9 +263,38 @@ static void fake_emitter(void) {{
 }}
 """
 
+SYNTH_TRACKER = """\
+#include "funcs.h"
+RecompReturn bank_00_CF7D_M1X1(CpuState *cpu) {
+  extern const char *g_last_recomp_func;
+  g_last_recomp_func = "bank_00_CF7D_M1X1";
+  RecompStackPush("bank_00_CF7D_M1X1");
+  uint8 _v1 = cpu_read8(cpu, 0x00, (uint16)(cpu->D + 0x0010));
+  if (cpu->host_return_valid == 1) {
+    RecompStackPop();
+    return RECOMP_RETURN_NORMAL;
+  }
+  L_CF7D_M1X1:;
+  uint16 _v2 = (uint16)(cpu->D + 0x09ef);
+  uint8 _v3 = cpu_read8(cpu, 0x00, _v2);
+  goto L_CF89_M1X1;
+  L_CF89_M1X1:;
+  RecompStackPop();
+  return RECOMP_RETURN_NORMAL;
+}
+"""
+
 INJECTOR_EXPECT = ["--expect", "cull_x=1", "--expect", "cull_y=1",
                    "--expect", "emitter=1", "--expect", "screen=1",
-                   "--expect", "prototype_files=2"]
+                   "--expect", "stream_ahead=1",
+                   "--expect", "prototype_files=3"]
+
+# Which marker each synthetic translation unit has to receive.
+INJECTOR_MARKERS = {
+    "bank82_fake.c": ("/*DCWS4*/", "/*DCWS5*/"),
+    "bank00_fake.c": ("/*DCWS4*/",),
+    "bank00_tracker_fake.c": ("/*DCWS6*/",),
+}
 
 
 def test_injector(repo, args):
@@ -277,6 +306,7 @@ def test_injector(repo, args):
         gen.mkdir()
         write_text(gen / "bank82_fake.c", SYNTH_CULL)
         write_text(gen / "bank00_fake.c", SYNTH_EMITTER)
+        write_text(gen / "bank00_tracker_fake.c", SYNTH_TRACKER)
         before = {p.name: p.read_text() for p in gen.glob("*.c")}
 
         # --check on an unpatched tree must fail (nothing has been injected).
@@ -297,11 +327,18 @@ def test_injector(repo, args):
             raise Fail("injector failed:\n%s" %
                        tail(rc.stdout.decode("utf-8", "replace")))
         patched = {p.name: p.read_text() for p in gen.glob("*.c")}
-        for name, text in patched.items():
-            if "DcWsObjectCullMargin" not in text:
-                raise Fail("%s was not patched" % name)
-        if "/*DCWS5*/" not in patched["bank82_fake.c"]:
-            raise Fail("the on-screen test site was not patched")
+        for name, markers in INJECTOR_MARKERS.items():
+            for marker in markers:
+                if marker not in patched[name]:
+                    raise Fail("%s did not receive %s" % (name, marker))
+        # The tracker hook has to drive the engine's own writer with the same
+        # call frame the authentic JSR site uses, or it corrupts the guest.
+        tracker = patched["bank00_tracker_fake.c"]
+        for needle in ("bank_00_D57F_M1X1(cpu)",
+                       "cpu->host_return_valid = 2",
+                       "cpu->D + 0x00d0"):
+            if needle not in tracker:
+                raise Fail("tracker hook lacks %r" % needle)
         rc = subprocess.run([py, str(injector), "--gen-dir", str(gen),
                              "--check"] + INJECTOR_EXPECT,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -349,8 +386,8 @@ def test_injector(repo, args):
             raise Fail("wrong failure for the changed anchor:\n%s" %
                        tail(rc.stdout.decode("utf-8", "replace")))
 
-    return "synthetic anchors: inject, idempotent re-run, missing site and " \
-           "changed anchor both rejected"
+    return "synthetic anchors: inject (cull/emitter/screen/stream), idempotent " \
+           "re-run, missing site and changed anchor both rejected"
 
 
 def test_injector_check(repo, args):

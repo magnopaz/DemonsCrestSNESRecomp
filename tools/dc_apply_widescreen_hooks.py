@@ -24,8 +24,21 @@ path stays bit-identical.
    everything else. The framework decodes 256..256+extra as the right margin
    and >= that as the wrapped left margin (PpuDecodeOamX).
 
+3. BG1 map restream lookahead (bank $00, `StreamRestream` at $C840):
+
+       lda #$14 / sta $14        ; fixed 21-call, 42-column (336 px) budget
+
+   $14 -> $14 + DcWsStreamAheadIters(). The restream starts 4 columns behind the
+   ring cursor, so its budget is what puts the frontier 304 px past the camera
+   (48 px past the authentic view). The per-frame tracker at $00:CF7D advances
+   the cursor 2 columns per 16 px of scroll afterwards, so one wider budget per
+   room load shifts the frontier permanently; measured margin staleness starts
+   at k ~= 50 and a 16:9 margin is 71 px (see docs/HANDOFF-widescreen-staging.md
+   §10). 0 extras reproduces the authentic immediate exactly, so 4:3 and any
+   margin <= 48 px stay bit-identical.
+
 The generated code is re-derived by tools/regen.sh; this script is idempotent
-(injected lines carry a /*DCWS4*/ or /*DCWS5*/ marker).
+(injected lines carry a /*DCWS4*/, /*DCWS5*/ or /*DCWS6*/ marker).
 
 Drift safety: the injector is the only thing standing between a generator
 change and a silently narrower game, so it counts what it patched and fails
@@ -50,8 +63,12 @@ import sys
 
 MARK = "/*DCWS4*/"
 MARK5 = "/*DCWS5*/"
+MARK6 = "/*DCWS6*/"
 PROTO = ("%s extern int DcWsObjectCullMargin(void); "
          "/* widescreen object cull margin (src/dc_widescreen.c) */" % MARK)
+PROTO_STREAM = ("%s extern int DcWsStreamCatchUpTake(int layer); "
+                "/* widescreen BG1 streaming catch-up (src/dc_widescreen.c) */"
+                % MARK6)
 
 X_CONST = re.compile(r"^(\s*)uint16 (_v\d+) = 0x1c0;$")
 Y_CONST = re.compile(r"^(\s*)uint16 (_v\d+) = 0x1a0;$")
@@ -79,16 +96,25 @@ PATCHED_SCREEN = re.compile(
     r"^\s*const uint16 _ws_m = \(uint16\)DcWsObjectCullMargin\(\);",
     re.MULTILINE)
 PATCHED_PROTO = re.compile(re.escape(PROTO))
+PATCHED_PROTO_STREAM = re.compile(re.escape(PROTO_STREAM))
 
-# The generator emits this many hook sites today (measured on the current
-# build: 5 object-cull X + 5 Y, 1 emitter, 6 on-screen test sites, and the
-# prototype in four bank files). These are MINIMA: more is fine (coverage can
-# grow), fewer means an anchor vanished and the port silently lost a hook.
+# The AOT per-frame BG map tracker $00:CF7D is where the streaming catch-up is
+# paid. The room restream itself ($00:C840) runs on the interpreter tier (it
+# yields to the scheduler in-line) and the analyzer refuses to emit it in any
+# M/X variant, so its fixed 42-column budget cannot be patched; the tracker it
+# leaves behind is AOT and drives the same $D57F map writer. The injected
+# preamble pays the debt the port arms when it sees a room restream, then the
+# authentic body maintains the phase. See docs/HANDOFF-widescreen-staging.md §10.
+STREAM_FUNC = re.compile(r"^RecompReturn bank_00_CF7D_M\dX\d\(CpuState \*cpu\) \{",
+                         re.MULTILINE)
+STREAM_ENTRY_LABEL = re.compile(r"^(\s*)L_CF7D_M\dX\d\s*:\s*;?\s*$")
+
 EXPECTED_MIN = {
     "cull_x": 5,
     "cull_y": 5,
     "emitter": 1,
     "screen": 6,
+    "stream_ahead": 1,
     "prototype_files": 3,
 }
 
@@ -97,12 +123,14 @@ class Drift(Exception):
     """An anchor disappeared or changed shape: refuse to touch the tree."""
 
 
-def inject_prototype(lines):
-    if any(PROTO in line for line in lines):
+def inject_prototype(lines, protos=(PROTO,)):
+    if all(any(p in line for line in lines) for p in protos):
         return
     for i, line in enumerate(lines):
         if line.startswith('#include "funcs.h"'):
-            lines.insert(i + 1, PROTO)
+            for j, p in enumerate(protos):
+                if not any(p in line for line in lines):
+                    lines.insert(i + 1 + j, p)
             return
     raise Drift('no #include "funcs.h" anchor for the injected prototype')
 
@@ -277,6 +305,83 @@ def patch_screen_test(path, lines):
     return changed
 
 
+def patch_stream_budget(path, lines):
+    """Pay the widescreen streaming debt from the AOT BG map tracker. Returns
+    lines changed.
+
+    The room restream ($00:C840) fills 42 columns (336 px) from 4 columns behind
+    the ring cursor, parking the frontier 304 px past the camera - 48 px past
+    the authentic view. Everything wider than that in the leading margin reads
+    the previous ring revolution (measured: staged to k=45, stale from k=50;
+    docs/HANDOFF-widescreen-staging.md §10). The restream runs on the
+    interpreter tier and cannot be hooked, so the extra columns are paid here,
+    at the entry of the AOT tracker that owns the same writer: the port arms a
+    debt when it sees a restream, and this preamble spends it exactly the way
+    the restream loop does (write the pair at the cursor, then advance it).
+    """
+    text = "\n".join(lines)
+    fn = STREAM_FUNC.search(text)
+    if not fn:
+        return 0
+    start = text.count("\n", 0, fn.start()) + 1
+    tail = text[fn.end():]
+    nxt = re.search(r"^RecompReturn bank_", tail, re.MULTILINE)
+    end = start + tail.count("\n", 0, nxt.start() if nxt else len(tail))
+    body = "\n".join(lines[start:end + 1])
+    if MARK6 in body:
+        return 0                       # already injected
+    label_i = None
+    for i in range(start, min(end + 1, len(lines))):
+        if STREAM_ENTRY_LABEL.match(lines[i]):
+            label_i = i
+            break
+    if label_i is None:
+        raise Drift("%s: bank_00_CF7D entry label not found" % path)
+    indent = "    "
+    injected = [
+        "%s{ %s /* Widescreen: pay the room restream's streaming debt." % (indent, MARK6),
+        "%s   * The engine's restream stops 304 px ahead of the camera, so a leading" % indent,
+        "%s   * margin wider than 48 px draws the previous ring revolution. The extra" % indent,
+        "%s   * pairs are written by the engine's own map writer, with the source phase" % indent,
+        "%s   * the restream left behind; the authentic body below then keeps the new" % indent,
+        "%s   * phase (+2 columns per 16 px of scroll). Debt 0 = nothing happens." % indent,
+        "%s   * The call frame mirrors the authentic JSR site at $00:CFCF (Option-1" % indent,
+        "%s   * cpu->S frame + host_return_valid = 2) and propagates a non-local" % indent,
+        "%s   * return exactly as that site does. */" % indent,
+        "%s  int _ws_pairs = DcWsStreamCatchUpTake((int)cpu_read8(cpu, 0x00, (uint16)(cpu->D + 0x0010))); %s"
+        % (indent, MARK6),
+        "%s  if (_ws_pairs > 0) {" % indent,
+        "%s    CpuState _ws_saved = *cpu; %s" % (indent, MARK6),
+        "%s    while (_ws_pairs-- > 0) {" % indent,
+        "%s      extern RecompReturn bank_00_D57F_M1X1(CpuState *cpu);" % indent,
+        "%s      RecompReturn _ws_r;" % indent,
+        "%s      cpu_write8(cpu, 0x00, cpu->S, 0xcf); cpu->S = (uint16)(cpu->S - 1);" % indent,
+        "%s      cpu_write8(cpu, 0x00, cpu->S, 0xd1); cpu->S = (uint16)(cpu->S - 1);" % indent,
+        "%s      cpu->host_return_valid = 2; %s" % (indent, MARK6),
+        "%s      _ws_r = bank_00_D57F_M1X1(cpu); %s" % (indent, MARK6),
+        "%s      if (_ws_r != RECOMP_RETURN_NORMAL) { %s" % (indent, MARK6),
+        "%s        cpu_trace_event(cpu, 0, CPU_TR_NLR_PROPAGATE, (uint8)_ws_r, 0);" % indent,
+        "%s        cpu_trace_mark_nlr_exit(BD_EXIT_KIND_SKIP_PROPAGATION);" % indent,
+        "%s        RecompStackPop();" % indent,
+        "%s        return (RecompReturn)((int)_ws_r - 1);" % indent,
+        "%s      }" % indent,
+        "%s      uint16 _ws_cd = (uint16)(cpu->D + 0x00d0 + cpu_read8(cpu, 0x00, (uint16)(cpu->D + 0x0010))); %s"
+        % (indent, MARK6),
+        "%s      uint8 _ws_cur = (uint8)((cpu_read8(cpu, 0x00, _ws_cd) + 2u) & 0x3fu);" % indent,
+        "%s      cpu_write8(cpu, 0x00, _ws_cd, _ws_cur);" % indent,
+        "%s      if ((_ws_cur & 0x1fu) == 0u) { %s" % (indent, MARK6),
+        "%s        uint16 _ws_pg = (uint16)(_ws_cd + 8u);" % indent,
+        "%s        cpu_write8(cpu, 0x00, _ws_pg, (uint8)(cpu_read8(cpu, 0x00, _ws_pg) + 1u));" % indent,
+        "%s      }" % indent,
+        "%s      *cpu = _ws_saved; %s" % (indent, MARK6),
+        "%s    }" % indent,
+        "%s  }" % indent,
+        "%s} %s" % (indent, MARK6),
+    ]
+    lines[label_i:label_i] = injected
+    return len(injected)
+
+
 def count_patched(text):
     """Hook sites present in `text` as already-injected code."""
     return {
@@ -285,6 +390,7 @@ def count_patched(text):
         "slack": len(PATCHED_SLACK.findall(text)),
         "emitter": len(PATCHED_EMITTER.findall(text)),
         "screen": len(PATCHED_SCREEN.findall(text)),
+        "stream_ahead": text.count("int _ws_pairs = DcWsStreamCatchUpTake("),
         "prototype_files": 1 if PATCHED_PROTO.search(text) else 0,
     }
 
@@ -368,9 +474,11 @@ def main() -> int:
             cull = patch_cull(path, lines)
             emit = patch_emitter(path, lines)
             screen = patch_screen_test(path, lines)
-            changed = cull + emit + screen
+            stream = patch_stream_budget(path, lines)
+            changed = cull + emit + screen + stream
             if changed:
-                inject_prototype(lines)
+                protos = [PROTO] + ([PROTO_STREAM] if stream else [])
+                inject_prototype(lines, tuple(protos))
             text = "\n".join(lines) + "\n" if changed else original
 
             if changed and not args.check:
@@ -379,8 +487,9 @@ def main() -> int:
             counts_file = count_patched(text)
             merge_counts(counts, counts_file)
             if changed:
-                changed_files.append("%s: cull %d, emitter %d, screen %d" %
-                                     (path.name, cull, emit, screen))
+                changed_files.append("%s: cull %d, emitter %d, screen %d, "
+                                     "stream %d" %
+                                     (path.name, cull, emit, screen, stream))
                 total_changed += changed
     except Drift as exc:
         print("dc_apply_widescreen_hooks: DRIFT: %s" % exc, file=sys.stderr)
@@ -414,11 +523,12 @@ def main() -> int:
               "; ".join(short), file=sys.stderr)
 
     print("dc_apply_widescreen_hooks: %s (cull_x %d, cull_y %d, slack %d, "
-          "emitter %d, screen %d, prototype files %d)" %
+          "emitter %d, screen %d, stream_ahead %d, prototype files %d)" %
           ("check ok" if args.check else "done",
            counts.get("cull_x", 0), counts.get("cull_y", 0),
            counts.get("slack", 0), counts.get("emitter", 0),
-           counts.get("screen", 0), counts.get("prototype_files", 0)))
+           counts.get("screen", 0), counts.get("stream_ahead", 0),
+           counts.get("prototype_files", 0)))
     return 0
 
 

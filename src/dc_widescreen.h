@@ -55,6 +55,27 @@ int DcWidescreenBg1RightEdge(void);
  * A/B captures; the historical switch name is retained). */
 int DcWidescreenMarginClampEnabled(void);
 
+/* Extra 8-px BG1 map columns the room restream must stage beyond the engine's
+ * own 304-px lookahead so the leading margin is stage-fresh all the way out.
+ * 0 = the authentic budget (4:3 and any margin <= 48 px stay bit-identical).
+ * Forced by SNESRECOMP_WS_STREAM_AHEAD=<columns> for A/B captures. */
+int DcWsStreamAheadColumns(void);
+
+/* The same in map-writer calls (the writer stages 2 columns per call). The
+ * restream runs on the interpreter tier and cannot be hooked, so this is paid
+ * from the AOT per-frame tracker instead (see DcWsStreamCatchUpArm below). */
+int DcWsStreamAheadIters(void);
+
+/* Per-frame poll of the ring cursor ($00D0): arms the catch-up when the cursor
+ * shows the room restream's 4-columns-per-frame burst (two frames in a row, so a
+ * state load or a camera jump cannot arm it). Call once per frame before the
+ * guest runs. No-op when the margin is inside the engine's own lookahead. */
+void DcWsStreamCatchUpTick(void);
+
+/* Called from the injected $00:CF7D preamble. Returns the number of extra map
+ * writer calls owed right now (0 later in the room), and clears the debt. */
+int DcWsStreamCatchUpTake(int layer);
+
 /* The scene gate every widescreen policy keys on: stage gameplay (widescreen
  * on, `$00FB` clear, area `$8D` in 1..0x7F, or the Mode 7 overworld's
  * alternate-HUD area). Shared with the staged-window edge repair. */
