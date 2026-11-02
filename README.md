@@ -13,6 +13,7 @@ using your own legally dumped ROM.
 [Quick start](#quick-start-build-from-source) |
 [Features](#features) |
 [Widescreen](#widescreen) |
+[Performance](#performance) |
 [Recording](#recording) |
 [Known issues](#known-issues) |
 [Build](#build) |
@@ -383,6 +384,165 @@ Rules for contributors:
    [`recomp/README.md`](recomp/README.md).
 3. Deal with unresolved indirect dispatch targets before anything else — they
    are the reason a port diverges.
+
+## Performance
+
+A recompilation removes the cost of *interpreting the 65816*; it does not make
+the console free. This port keeps the framework's LLE-first execution model (see
+[How the recompilation works](#how-the-recompilation-works)), so every frame
+still pays for three different things: guest code execution (generated bodies
+plus everything the analysis left on the interpreter), the emulated PPU and
+APU/SPC700, and the host's composition and presentation. The measurements below
+attribute a frame to those buckets, and explain why a mature SNES emulator can
+still use less CPU on the same machine — and why that is the expected shape of
+this port rather than a defect.
+
+### How to reproduce
+
+The runner carries its own attribution, so no rebuild is needed:
+
+```sh
+cd build
+
+# throughput config: unpaced, audio off, default PPU tier, SDL's own presenter.
+# Keep it in its own file and re-create it before every A/B run -- the host
+# writes the active config back on exit.
+cat > perf-config.ini <<'EOF'
+[General]
+DisableFrameDelay = 1
+Autosave = 0
+
+[Graphics]
+WindowScale = 3
+Renderer = auto
+NewRenderer = 1
+
+[Sound]
+EnableAudio = 0
+EOF
+
+printf 'loadstate 0\nwait 900\nquit\n' > perf-script.txt
+cp saves/lvl_0_murkland-colosseum.sav saves/save0.sav
+
+SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy \
+SNESRECOMP_FRAME_TIMING="$PWD/perf-timing.csv" \
+./DemonsCrestSNESRecomp --no-launcher --config perf-config.ini \
+    --script perf-script.txt "/path/to/Demon's Crest (USA).sfc"
+```
+
+(The working directory also needs `mods/preloaded` for the widescreen variant;
+the build directory already has it.)
+
+`SNESRECOMP_FRAME_TIMING` writes one row per presented frame
+(`guest, raster_ms, acquire_ms, compose_ms, present_ms, trace_ms, hook_ms,
+events_ms, wait_ms`); `SNESRECOMP_HOST_PROFILE=1` prints the same stage means at
+exit. Three practical traps: the host **rewrites the active `config.ini` on
+exit**, so a variant whose axis lives in that file silently reverts unless you
+re-create it per run; `Renderer = opengl` (the native GL presenter) cannot
+initialise headless — use `auto` or `software`; and `SDL_VIDEODRIVER=dummy` has
+no render driver at all (the host stops at `renderer init FAILED`), so headless
+means `offscreen`.
+
+### Where a frame goes
+
+Sample run: Raspberry Pi 4 (aarch64, Ubuntu 24.04, 4× Cortex-A72), Release
+build, SDL2 backend, no window, from the gameplay save state
+`lvl_0_murkland-colosseum.sav`, 902 frames, pacing disabled, 4:3, audio off.
+Means over the 892 frames that follow the state load.
+
+| Stage | ms/frame | Share | What it is |
+|---|---:|---:|---|
+| `guest` | 8.36 | 75% | running the machine: 65816 execution (generated + interpreted), APU stepping, bus and cycle accounting |
+| `raster-capture` | 1.51 | 13% | drawing the frame from PPU/VRAM state and capturing it for presentation |
+| `compose` | 0.26 | 2% | extra composition (widescreen/blend staging) |
+| `present` | 1.02 | 9% | texture upload and present |
+| `acquire` / `events` / others | 0.05 | 0% | surface and event pumping |
+| **total** | **11.20** | **100%** | **≈ 89 fps uncapped, one core saturated** |
+
+Two things about that table are easy to misread:
+
+- **`guest` is not "the PPU".** It is the simulated machine minus the draw. The
+  pixel work sits in `raster-capture`, and it is cheap here: re-running the same
+  scene with `SNESRECOMP_LAYER_MASK=0` (which keeps no layer at all, so no tile
+  or sprite pixel is fetched or written) drops that stage from 1.51 to 1.00
+  ms/frame and the whole frame by only 4% — 89.3 → 93.0 fps. This title is bound
+  by executing code, the APU and the bus, not by drawing.
+- **`present` is where the presentation backend shows up**, and it is the only
+  stage whose cost depends on how the frame reaches the window.
+
+### What each option costs
+
+Same scene, same host, one axis changed at a time:
+
+| Variant | ms/frame | fps | Delta | Where it lands |
+|---|---:|---:|---:|---|
+| baseline (above) | 11.20 | 89.3 | — | — |
+| audio enabled (32 kHz stereo) | 11.31 | 88.4 | +1% | `guest` +0.1, `present` flat |
+| widescreen 16:9 | 11.73 | 85.2 | +5% | `raster-capture` +0.19, `compose` +0.12, `present` +0.22 |
+| widescreen + audio | 11.79 | 84.8 | +6% | additive, still small |
+| `NewRenderer = 0` (reference PPU) | 17.07 | 58.6 | **+53%** | `raster-capture` 1.51 → 7.30 (4.9×) |
+| `Renderer = software` | 20.03 | 49.9 | **+79%** | `present` 1.02 → 9.77 (9.5×) |
+| `SNESRECOMP_LAYER_MASK=0` (no layer drawn) | 10.75 | 93.0 | −4% | `raster-capture` 1.51 → 1.00 |
+| `WindowScale = 1` instead of 3 | 11.23 | 89.0 | 0% | the 3× scale is free in this path |
+
+So the two expensive switches are the ones users can flip in the launcher, not
+the enhancement: the software presentation backend costs almost as much as
+simulating the whole console, and the legacy PPU tier costs more than everything
+else combined. Widescreen and audio are in the noise by comparison.
+
+### Why this is the expected shape
+
+- **Only the CPU was recompiled.** PPU rendering, APU/SPC700 and DSP synthesis,
+  DMA/HDMA and hardware register I/O are emulated by the framework. That work is
+  architecturally the same work an emulator does; a recompilation has no way to
+  remove it. On this title it is ~25% of the frame (`raster-capture`, `compose`,
+  `present`), and inside `guest` the APU and bus accounting.
+- **The guest tier is LLE-first by design.** The interpreter is the correctness
+  floor and the scheduler/main loop runs on it; generated bodies are entered
+  through the dispatch table wherever the analysis proved a variant, and anything
+  indirect or unproven stays interpreted. Proving more of the game (entries in
+  `recomp/symbols.toml`, resolved indirect targets) moves time from interpreted
+  to native execution — that is the one lever a recompilation actually owns, and
+  it is deliberately gated on proof rather than on speed.
+- **The interpreter boundary is not free.** Every native↔interp transfer
+  re-establishes the guest stack contract, settles DRAM refresh/cycle debt and
+  re-checks width variants. A byte-for-byte-faithful 65816 running a scheduler
+  in this shape costs more than an emulator's tight computed-goto loop that owns
+  the whole machine and can ignore the boundary.
+- **A mature emulator is very hard to beat at its own game.** Snes9x has decades
+  of tuning on exactly this model: per-scanline rendering straight into the
+  texture with no staging step, no widescreen shadow to maintain, no diagnostic
+  or state rings, no recompilation ABI, and no reason to keep LLE paths around
+  for correctness investigations. This port pays for all of those, and it also
+  renders through a composition + upload stage so that enhancement policies can
+  exist at all.
+- **This title is a light one.** ~89 fps uncapped on a 4-core ARM SBC means the
+  frame is ~11 ms on a CPU that is several times slower per thread than a modern
+  desktop. The port is nowhere near CPU-bound at 60 fps.
+
+### Reading CPU usage while playing
+
+Task-manager CPU percentage at 60 fps is a poor metric: the loop is paced, the
+audio device and the graphics driver own threads of their own, and time spent
+waiting for vsync is indistinguishable from time spent emulating. A paced run of
+the same scene here took 15.05 s wall for 902 frames (59.9 fps) but 11.98 s of
+CPU — the frame cost is unchanged, the remainder is pacing slack. When a number
+needs to mean something, use the stage CSV above (or `SNESRECOMP_HOST_PROFILE=1`)
+rather than the percentage.
+
+### Headroom that already exists
+
+Nothing above is a promise that the port is as fast as it can get. The
+framework's own burn-down (`snesrecomp/docs/PERFORMANCE.md`) records the levers
+it measures and retains, and
+[`HLE_DEFAULTS.md`](snesrecomp/docs/HLE_DEFAULTS.md) records the one that has
+already been qualified on another title: composing each frame in cached host
+memory and uploading it once — LLE → HLE frame service — took Mega Man X from
+341 to 890 uncapped fps with 67% less process CPU on Windows x64. This port pins
+the framework's execution policy to the faithful floor (`off`) and keeps the LLE
+frame service on non-Windows targets, so those gains are available but not
+taken: promoting them needs the framework's correctness gates plus a gameplay
+pass, exactly like any other optimisation in this tree.
 
 ## Layout
 
