@@ -11,7 +11,12 @@ then compares
 
 so a mismatch is proven bad margin content, not a policy artifact.
 
-Usage: oracle.py <fixture.sav> [--extra N] [--frames N] [--env K=V ...]
+Usage: oracle.py <fixture.sav> [--extra N] [--frames N] [--pre "cmd..."] [--env K=V ...]
+
+`--pre` inserts script lines (``\n``-separated) between the state load and the
+measured walk, e.g. `--pre "press right 120\nwait 120"` to walk through a door
+first, so the measured walk happens in a *freshly built* room instead of at a
+state-load position.
 """
 import argparse
 import json
@@ -24,8 +29,10 @@ HERE = pathlib.Path(__file__).resolve().parent
 PROBE = HERE / "probe.py"
 
 
-def make_script(frames, save, chunk):
+def make_script(frames, save, chunk, pre=""):
     lines = ["loadstate 0", "wait 20"]
+    if pre:
+        lines += [ln for ln in pre.split("\n") if ln.strip()]
     for i in range(frames):
         lines.append("press right %d" % chunk)
         lines.append("dump d%03d" % i)
@@ -38,9 +45,9 @@ def camera(wram: bytes) -> int:
     return struct.unpack_from("<H", wram, 0xC0)[0]
 
 
-def run(save, extra, frames, envs, case, chunk):
+def run(save, extra, frames, envs, case, chunk, pre=""):
     script = case.with_suffix(".txt")
-    script.write_text(make_script(frames, save, chunk))
+    script.write_text(make_script(frames, save, chunk, pre))
     cmd = [sys.executable, str(PROBE), "run", "--name", str(case), "--ws", "1",
            "--extra", str(extra), "--save", save, "--script", str(script)]
     for e in envs:
@@ -57,10 +64,12 @@ def main():
     ap.add_argument("--env", action="append", default=[])
     ap.add_argument("--chunk", type=int, default=8)
     ap.add_argument("--case", default="oracle")
+    ap.add_argument("--pre", default="",
+                    help="script lines run between the state load and the walk")
     a = ap.parse_args()
 
     case = pathlib.Path(a.case)
-    rc, out, err = run(a.save, a.extra, a.frames, a.env, case, a.chunk)
+    rc, out, err = run(a.save, a.extra, a.frames, a.env, case, a.chunk, a.pre)
     dump = case / "dump"
     frames = []
     for p in sorted(dump.glob("d*.fbwide.bgrx")):
